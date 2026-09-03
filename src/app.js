@@ -58,23 +58,13 @@ app.use(
   })
 )
 
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: {
-    useDefaults: true,
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      imgSrc: ["'self'", "data:", "https:"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-    },
-  },
-  strictTransportSecurity: {
-    maxAge: 0,
-    includeSubDomains: false,
-  },
-}))
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false,
+    strictTransportSecurity: false,
+  })
+)
 app.use(express.json({ limit: "10mb" }))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
@@ -96,6 +86,12 @@ app.get("/health", (req, res) => {
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customCss: ".swagger-ui .topbar { display: none }",
   customSiteTitle: "Xerin Delivery API Docs",
+  customfavIcon: "/assets/favicon.png",
+  swaggerOptions: {
+    docExpansion: "none",
+    filter: true,
+    showRequestDuration: true,
+  },
 }))
 
 app.use("/api/v1/auth", authRoutes)
