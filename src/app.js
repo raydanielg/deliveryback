@@ -41,7 +41,7 @@ const app = express()
 
 app.set("trust proxy", 1)
 
-const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:3000,https://xerinexpress.com,https://www.xerinexpress.com")
   .split(",")
   .map((o) => o.trim())
 
