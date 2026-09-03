@@ -15,7 +15,7 @@ const options = {
     servers: [
       {
         url: process.env.SERVER_URL || `http://localhost:${process.env.PORT || 4000}`,
-        description: "Development server",
+        description: process.env.NODE_ENV === "production" ? "Production server" : "Development server",
       },
     ],
     components: {
