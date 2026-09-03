@@ -33,6 +33,10 @@ import surgePricingRoutes from "./modules/surge-pricing/routes.js"
 import zonesRoutes from "./modules/zones/routes.js"
 import usersRoutes from "./modules/users/routes.js"
 import settingsRoutes from "./modules/settings/routes.js"
+import stationsRoutes from "./modules/stations/routes.js"
+import notificationServiceRoutes from "./modules/notification-service/routes.js"
+import exceptionsRoutes from "./modules/exceptions/routes.js"
+import capacityRoutes from "./modules/capacity/routes.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
 
 dotenv.config()
@@ -119,6 +123,10 @@ app.use("/api/v1/surge-pricing", surgePricingRoutes)
 app.use("/api/v1/zones", zonesRoutes)
 app.use("/api/v1/users", usersRoutes)
 app.use("/api/v1/settings", settingsRoutes)
+app.use("/api/v1/stations", stationsRoutes)
+app.use("/api/v1/notification-service", notificationServiceRoutes)
+app.use("/api/v1/exceptions", exceptionsRoutes)
+app.use("/api/v1/capacity", capacityRoutes)
 
 app.use(notFound)
 app.use(errorHandler)

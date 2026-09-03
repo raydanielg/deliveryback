@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { calculateQuote } from "../pricing/service.js"
 import { calculateVolumetricWeight, getChargeableWeight } from "../pricing/service.js"
+import { triggerStatusNotification } from "../notification-service/controller.js"
 import { createShipmentSchema, updateShipmentStatusSchema, assignShipmentSchema, verifyOtpSchema, uploadProofSchema, scheduleShipmentSchema, createParcelShipmentSchema } from "./validation.js"
 
 function generateTrackingNumber() {
@@ -291,6 +292,8 @@ export async function updateShipmentStatus(req, res, next) {
         createdBy: req.user?.id,
       },
     })
+
+    triggerStatusNotification(id, data.status)
 
     res.json({ success: true, data: updated })
   } catch (err) { next(err) }

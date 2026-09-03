@@ -728,6 +728,14 @@ model Shipment {
   ratings          Rating[]
   parcelCategory   ParcelCategory?  @relation(fields: [parcelCategoryId], references: [id])
   proofImages      ShipmentProofImage[]
+  station          Station?        @relation("stationShipments", fields: [stationId], references: [id])
+  receivedAtStation Station?       @relation("stationReceivedShipments", fields: [receivedAtStationId], references: [id])
+  stationInventory StationInventory[]
+  exceptions       ShipmentException[]
+
+  // Station fields
+  stationId        String?
+  receivedAtStationId String?
 
   @@index([trackingNumber])
   @@index([status])
@@ -948,6 +956,10 @@ model Manifest {
   createdBy       User         @relation("manifestsCreatedBy", fields: [createdById], references: [id])
   shipments       Shipment[]
   handovers       ManifestHandover[]
+  station         Station?     @relation("stationManifests", fields: [stationId], references: [id])
+
+  // Station reference for SGR manifests
+  stationId       String?
 
   @@map("manifests")
 }
@@ -1391,4 +1403,125 @@ model ShipmentProofImage {
   shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
   @@map("shipment_proof_images")
+}
+
+// ============================================================
+// STATION MANAGEMENT & INVENTORY
+// ============================================================
+
+model Station {
+  id            String       @id @default(cuid())
+  name          String
+  code          String       @unique
+  type          StationType  @default(SGR_STATION)
+  city          String?
+  region        String?
+  country       String?
+  address       String?
+  latitude      Float?
+  longitude     Float?
+  phone         String?
+  email         String?
+  managerName   String?
+  capacityKg    Decimal?     @db.Decimal(10, 2)
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  shipments     Shipment[]   @relation("stationShipments")
+  receivedShipments Shipment[] @relation("stationReceivedShipments")
+  manifests     Manifest[]   @relation("stationManifests")
+  inventory     StationInventory[]
+  exceptions    ShipmentException[]
+
+  @@map("stations")
+}
+
+enum StationType {
+  SGR_STATION
+  WAREHOUSE
+  HUB
+  DROP_POINT
+  AIRPORT_CARGO
+}
+
+model StationInventory {
+  id            String   @id @default(cuid())
+  stationId     String
+  shipmentId    String
+  status        String   @default("RECEIVED")
+  receivedAt    DateTime @default(now())
+  dispatchedAt  DateTime?
+  notes         String?
+
+  station       Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  shipment      Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([stationId, status])
+  @@map("station_inventory")
+}
+
+// ============================================================
+// RETURNS & EXCEPTION MANAGEMENT
+// ============================================================
+
+model ShipmentException {
+  id            String          @id @default(cuid())
+  shipmentId    String
+  stationId     String?
+  type          ExceptionType
+  status        ExceptionStatus @default(OPEN)
+  reason        String
+  description   String?
+  resolvedAt    DateTime?
+  resolvedBy    String?
+  resolution    String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  shipment      Shipment        @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  station       Station?        @relation(fields: [stationId], references: [id])
+
+  @@index([status])
+  @@map("shipment_exceptions")
+}
+
+enum ExceptionType {
+  MISSED_SCAN
+  DAMAGED
+  LOST
+  WRONG_DESTINATION
+  OVERWEIGHT
+  UNCLAIMED
+  RETURN_REQUEST
+  CUSTOMER_REFUSAL
+}
+
+enum ExceptionStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  ESCALATED
+  CLOSED
+}
+
+// ============================================================
+// NOTIFICATION LOG (for SMS/Push/Email tracking)
+// ============================================================
+
+model NotificationLog {
+  id            String   @id @default(cuid())
+  notificationId String?
+  recipient     String
+  channel       NotificationChannel
+  provider      String?
+  providerId    String?
+  status        String   @default("PENDING")
+  errorMessage  String?
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([recipient])
+  @@map("notification_logs")
 }
