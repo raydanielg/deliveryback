@@ -1,0 +1,1358 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AUTH & USERS
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String
+  phone         String?
+  role          UserRole  @default(CUSTOMER)
+  avatar        String?
+  isVerified    Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  resetOtp      String?
+  resetOtpExp   DateTime?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customer      Customer?
+  driver        Driver?
+  organizationUsers OrganizationUser[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  shipments     Shipment[]      @relation("shipmentsCreatedBy")
+  orders        Order[]         @relation("ordersCreatedBy")
+  quotes        Quote[]         @relation("quotesCreatedBy")
+  quoteRequests QuoteRequest[]
+  payments      Payment[]
+  assignments   Assignment[]    @relation("assignmentsAssignedBy")
+  manifests     Manifest[]      @relation("manifestsCreatedBy")
+  customsDeclarations CustomsDeclaration[]
+
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  OPERATIONS_MANAGER
+  DISPATCHER
+  FINANCE
+  CUSTOMER_SUPPORT
+  WAREHOUSE_MANAGER
+  CUSTOMS_OFFICER
+  REPORT_VIEWER
+  CUSTOMER
+  DRIVER
+}
+
+// ============================================================
+// ORGANIZATIONS (Corporate/Business customers)
+// ============================================================
+
+model Organization {
+  id            String   @id @default(cuid())
+  name          String
+  legalName     String?
+  taxId         String?
+  email         String
+  phone         String?
+  address       String?
+  city          String?
+  country       String?
+  website       String?
+  logo          String?
+  creditLimit   Decimal? @db.Decimal(12, 2)
+  creditBalance Decimal? @db.Decimal(12, 2) @default(0)
+  billingCycle  String?  @default("MONTHLY")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  users         OrganizationUser[]
+  branches      Branch[]
+  orders        Order[]
+  shipments     Shipment[]
+  customers     Customer[]
+
+  @@map("organizations")
+}
+
+model OrganizationUser {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String   @default("STAFF")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_users")
+}
+
+model Branch {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  address        String
+  city           String
+  region         String?
+  country        String   @default("Tanzania")
+  phone          String?
+  email          String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  addresses      Address[]
+
+  @@map("branches")
+}
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
+model Customer {
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  type          CustomerType @default(INDIVIDUAL)
+  organizationId String?
+  phone         String
+  altPhone      String?
+  address       String?
+  city          String?
+  region        String?
+  country       String       @default("Tanzania")
+  totalShipments Int         @default(0)
+  totalSpent    Decimal      @default(0) @db.Decimal(12, 2)
+  rating        Float?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization  Organization? @relation(fields: [organizationId], references: [id])
+  orders        Order[]
+  shipments     Shipment[]
+  addresses     Address[]
+  ratings       Rating[]
+
+  @@map("customers")
+}
+
+enum CustomerType {
+  GUEST
+  INDIVIDUAL
+  BUSINESS
+  CORPORATE
+}
+
+// ============================================================
+// ADDRESSES
+// ============================================================
+
+model Address {
+  id          String   @id @default(cuid())
+  customerId  String?
+  branchId    String?
+  label       String?
+  fullName    String
+  phone       String
+  line1       String
+  line2       String?
+  city        String
+  region      String?
+  district    String?
+  country     String   @default("Tanzania")
+  postalCode  String?
+  latitude    Float?
+  longitude   Float?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer?  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branch      Branch?    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  shipmentsFrom Shipment[] @relation("shipmentsFromAddress")
+  shipmentsTo   Shipment[] @relation("shipmentsToAddress")
+
+  @@map("addresses")
+}
+
+// ============================================================
+// DRIVERS & CARRIERS & VEHICLES
+// ============================================================
+
+model Driver {
+  id              String       @id @default(cuid())
+  userId          String       @unique
+  licenseNumber   String
+  licenseExpiry   DateTime?
+  carrierId       String?
+  status          DriverStatus @default(AVAILABLE)
+  rating          Float?
+  totalDeliveries Int          @default(0)
+  currentLatitude Float?
+  currentLongitude Float?
+  lastLocationAt  DateTime?
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  carrier         Carrier?     @relation(fields: [carrierId], references: [id])
+  assignments     Assignment[]
+  manifests       Manifest[]
+  driverLocations DriverLocation[]
+  shipments       Shipment[]
+  ratings         Rating[]
+
+  @@map("drivers")
+}
+
+enum DriverStatus {
+  AVAILABLE
+  ON_TRIP
+  ON_BREAK
+  OFFLINE
+  MAINTENANCE
+}
+
+model Carrier {
+  id          String          @id @default(cuid())
+  name        String
+  type        CarrierType     @default(XERIN)
+  email       String?
+  phone       String?
+  address     String?
+  city        String?
+  country     String          @default("Tanzania")
+  licenseNo   String?
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  drivers     Driver[]
+  vehicles    Vehicle[]
+  shipments   Shipment[]
+
+  @@map("carriers")
+}
+
+enum CarrierType {
+  XERIN
+  PARTNER
+  THIRD_PARTY
+}
+
+model Vehicle {
+  id             String         @id @default(cuid())
+  carrierId      String
+  registrationNo String         @unique
+  type           VehicleType
+  capacityKg     Decimal        @db.Decimal(8, 2)
+  capacityM3     Decimal?       @db.Decimal(8, 2)
+  make           String?
+  model          String?
+  year           Int?
+  status         VehicleStatus  @default(AVAILABLE)
+  currentLatitude Float?
+  currentLongitude Float?
+  lastLocationAt DateTime?
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  carrier        Carrier        @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  manifests      Manifest[]
+  shipments      Shipment[]
+  assignments    Assignment[]
+
+  @@map("vehicles")
+}
+
+enum VehicleType {
+  MOTORCYCLE
+  BICYCLE
+  CAR
+  VAN
+  PICKUP
+  TRUCK
+  TRAILER
+  CONTAINER
+}
+
+enum VehicleStatus {
+  AVAILABLE
+  ON_TRIP
+  MAINTENANCE
+  INACTIVE
+}
+
+model DriverLocation {
+  id          String   @id @default(cuid())
+  driverId    String
+  latitude    Float
+  longitude   Float
+  accuracy    Float?
+  speed       Float?
+  heading     Float?
+  timestamp   DateTime @default(now())
+
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, timestamp])
+  @@map("driver_locations")
+}
+
+// ============================================================
+// GEOGRAPHY: Countries, Regions, Cities, Zones
+// ============================================================
+
+model Country {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  currency  String   @default("TZS")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  cities     City[]
+  zones      Zone[]
+  regions    Region[]
+  pricingRules PricingRule[]
+  shipmentsFrom Shipment[] @relation("shipmentsFromCountry")
+  shipmentsTo   Shipment[] @relation("shipmentsToCountry")
+
+  @@map("countries")
+}
+
+model Region {
+  id        String   @id @default(cuid())
+  countryId String
+  name      String
+  code      String?
+  isActive  Boolean  @default(true)
+
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  cities    City[]
+  zones     Zone[]
+
+  @@map("regions")
+}
+
+model City {
+  id        String   @id @default(cuid())
+  countryId String
+  regionId  String?
+  name      String
+  code      String?
+  latitude  Float?
+  longitude Float?
+  isActive  Boolean  @default(true)
+
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  region    Region?  @relation(fields: [regionId], references: [id])
+  zones     Zone[]
+  routesFrom Route[] @relation("routesFromCity")
+  routesTo   Route[] @relation("routesToCity")
+
+  @@map("cities")
+}
+
+model Zone {
+  id        String   @id @default(cuid())
+  countryId String
+  regionId  String?
+  cityId    String?
+  name      String
+  code      String?
+  isActive  Boolean  @default(true)
+
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  region    Region?  @relation(fields: [regionId], references: [id])
+  city      City?    @relation(fields: [cityId], references: [id])
+  pricingRules PricingRule[]
+
+  @@map("zones")
+}
+
+// ============================================================
+// ROUTES
+// ============================================================
+
+model Route {
+  id           String   @id @default(cuid())
+  fromCityId   String
+  toCityId     String
+  distanceKm   Decimal  @db.Decimal(8, 2)
+  estimatedHours Decimal? @db.Decimal(6, 1)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  fromCity     City     @relation("routesFromCity", fields: [fromCityId], references: [id])
+  toCity       City     @relation("routesToCity", fields: [toCityId], references: [id])
+  pricingRules PricingRule[]
+  manifests    Manifest[]
+
+  @@unique([fromCityId, toCityId])
+  @@map("routes")
+}
+
+// ============================================================
+// PRICING ENGINE
+// ============================================================
+
+model PricingRule {
+  id              String           @id @default(cuid())
+  name            String
+  code            String           @unique
+  type            PricingType
+  category        ShipmentCategory?
+  transportMode   TransportMode?
+  serviceLevel    ServiceLevel?
+  routeId         String?
+  zoneId          String?
+  countryId       String?
+  baseFare        Decimal          @db.Decimal(12, 2) @default(0)
+  perKg           Decimal?         @db.Decimal(12, 2)
+  perKm           Decimal?         @db.Decimal(12, 2)
+  perM3           Decimal?         @db.Decimal(12, 2)
+  minCharge       Decimal?         @db.Decimal(12, 2)
+  maxCharge       Decimal?         @db.Decimal(12, 2)
+  weightTiers     Json?
+  conditions      Json?
+  priority        Int              @default(0)
+  isActive        Boolean          @default(true)
+  effectiveFrom   DateTime         @default(now())
+  effectiveTo     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  route           Route?           @relation(fields: [routeId], references: [id])
+  zone            Zone?            @relation(fields: [zoneId], references: [id])
+  country         Country?         @relation(fields: [countryId], references: [id])
+  surcharges      Surcharge[]
+
+  @@map("pricing_rules")
+}
+
+enum PricingType {
+  DISTANCE
+  WEIGHT
+  VOLUMETRIC
+  ROUTE
+  ZONE
+  COUNTRY
+  TRANSPORT
+  SERVICE
+  FLAT
+  CUSTOM
+}
+
+model Surcharge {
+  id            String   @id @default(cuid())
+  name          String
+  code          String   @unique
+  type          SurchargeType
+  calculation   SurchargeCalc @default(FIXED)
+  value         Decimal  @db.Decimal(12, 2)
+  appliesTo     String?
+  isActive      Boolean  @default(true)
+  pricingRuleId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  pricingRule   PricingRule? @relation(fields: [pricingRuleId], references: [id], onDelete: Cascade)
+
+  @@map("surcharges")
+}
+
+enum SurchargeType {
+  FUEL_SURCHARGE
+  HANDLING_FEE
+  LOADING_FEE
+  UNLOADING_FEE
+  WAREHOUSE_FEE
+  INSURANCE
+  CUSTOMS_HANDLING
+  REMOTE_AREA_FEE
+  FRAGILE_FEE
+  OVERSIZE_FEE
+  EXPRESS_FEE
+  WEEKEND_FEE
+  TAX
+  OTHER
+}
+
+enum SurchargeCalc {
+  FIXED
+  PERCENTAGE
+  PER_KG
+  PER_KM
+}
+
+// ============================================================
+// QUOTES
+// ============================================================
+
+model Quote {
+  id              String   @id @default(cuid())
+  quoteNumber     String   @unique
+  createdById     String
+  category        ShipmentCategory
+  transportMode   TransportMode?
+  serviceLevel    ServiceLevel @default(STANDARD)
+  originCity      String
+  destinationCity String
+  originCountry   String   @default("Tanzania")
+  destCountry     String   @default("Tanzania")
+  distanceKm      Decimal? @db.Decimal(8, 2)
+  actualWeightKg  Decimal  @db.Decimal(8, 2)
+  volumetricWeightKg Decimal? @db.Decimal(8, 2)
+  chargeableWeightKg Decimal @db.Decimal(8, 2)
+  lengthCm        Decimal? @db.Decimal(8, 2)
+  widthCm         Decimal? @db.Decimal(8, 2)
+  heightCm        Decimal? @db.Decimal(8, 2)
+  packageType     PackageType @default(PARCEL)
+  currency        String   @default("TZS")
+  subtotal        Decimal  @db.Decimal(12, 2)
+  fees            Json?
+  tax             Decimal  @db.Decimal(12, 2) @default(0)
+  insurancePremium Decimal? @db.Decimal(12, 2)
+  total           Decimal  @db.Decimal(12, 2)
+  etaMin          Int?
+  etaMax          Int?
+  validUntil      DateTime
+  status          QuoteStatus @default(VALID)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy       User     @relation("quotesCreatedBy", fields: [createdById], references: [id])
+  order           Order?
+
+  @@map("quotes")
+}
+
+enum QuoteStatus {
+  VALID
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+model QuoteRequest {
+  id              String   @id @default(cuid())
+  requestNumber   String   @unique
+  createdById     String
+  category        ShipmentCategory
+  transportMode   TransportMode?
+  originCity      String
+  destinationCity String
+  originCountry   String   @default("Tanzania")
+  destCountry     String   @default("Tanzania")
+  weightKg        Decimal  @db.Decimal(8, 2)
+  lengthCm        Decimal? @db.Decimal(8, 2)
+  widthCm         Decimal? @db.Decimal(8, 2)
+  heightCm        Decimal? @db.Decimal(8, 2)
+  description     String?
+  specialHandling String?
+  status          QuoteRequestStatus @default(PENDING)
+  quotedPrice     Decimal? @db.Decimal(12, 2)
+  quotedCurrency  String?  @default("TZS")
+  validityDays    Int?     @default(7)
+  adminNotes      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy       User     @relation(fields: [createdById], references: [id])
+
+  @@map("quote_requests")
+}
+
+enum QuoteRequestStatus {
+  PENDING
+  QUOTED
+  ACCEPTED
+  REJECTED
+  REVISION_REQUESTED
+  EXPIRED
+}
+
+// ============================================================
+// ORDERS & SHIPMENTS
+// ============================================================
+
+model Order {
+  id              String       @id @default(cuid())
+  orderNumber     String       @unique
+  createdById     String
+  customerId      String?
+  organizationId  String?
+  quoteId         String?  @unique
+  totalAmount     Decimal      @db.Decimal(12, 2)
+  currency        String       @default("TZS")
+  paymentStatus   PaymentStatus @default(PENDING)
+  status          OrderStatus  @default(CREATED)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  createdBy       User         @relation("ordersCreatedBy", fields: [createdById], references: [id])
+  customer        Customer?    @relation(fields: [customerId], references: [id])
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  quote           Quote?       @relation(fields: [quoteId], references: [id])
+  shipments       Shipment[]
+  payments        Payment[]
+  invoices        Invoice[]
+
+  @@map("orders")
+}
+
+enum OrderStatus {
+  CREATED
+  CONFIRMED
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model Shipment {
+  id               String           @id @default(cuid())
+  trackingNumber   String           @unique
+  orderId          String
+  createdById      String
+  customerId       String?
+  organizationId   String?
+  carrierId        String?
+  driverId         String?
+  vehicleId        String?
+  fromAddressId    String
+  toAddressId      String
+  fromCountryId    String?
+  toCountryId      String?
+
+  category         ShipmentCategory
+  shipmentType     String?
+  transportMode    TransportMode    @default(ROAD)
+  serviceLevel     ServiceLevel     @default(STANDARD)
+  fulfillmentType  FulfillmentType  @default(DOOR_TO_DOOR)
+
+  status           ShipmentStatus   @default(BOOKED)
+  paymentStatus    PaymentStatus    @default(PENDING)
+
+  actualWeightKg   Decimal          @db.Decimal(8, 2)
+  volumetricWeightKg Decimal?       @db.Decimal(8, 2)
+  chargeableWeightKg Decimal        @db.Decimal(8, 2)
+  declaredValue    Decimal?         @db.Decimal(12, 2)
+  insuranceEnabled Boolean          @default(false)
+  insurancePremium Decimal?         @db.Decimal(12, 2)
+
+  totalAmount      Decimal          @db.Decimal(12, 2)
+  currency         String           @default("TZS")
+  baseCurrencyAmount Decimal?       @db.Decimal(12, 2)
+  exchangeRate     Decimal?         @db.Decimal(10, 4)
+
+  specialHandling  String[]
+  description      String?
+  estimatedPickup  DateTime?
+  estimatedDelivery DateTime?
+  actualPickup     DateTime?
+  actualDelivery   DateTime?
+
+  // Parcel flow fields (from drivemond)
+  parcelCategoryId String?
+  otp              String?
+  proofImageUrl    String?
+  scheduledAt      DateTime?
+  payer            String         @default("SENDER")
+  tips             Decimal?       @db.Decimal(12, 2) @default(0)
+  cancellationReason String?
+  isParcelDeliveryProofEnabled Boolean @default(false)
+  isScheduled      Boolean        @default(false)
+  isPaused         Boolean        @default(false)
+  note             String?
+  pickupNote       String?
+
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy        User             @relation("shipmentsCreatedBy", fields: [createdById], references: [id])
+  customer         Customer?        @relation(fields: [customerId], references: [id])
+  organization     Organization?    @relation(fields: [organizationId], references: [id])
+  carrier          Carrier?         @relation(fields: [carrierId], references: [id])
+  driver           Driver?          @relation(fields: [driverId], references: [id])
+  vehicle          Vehicle?         @relation(fields: [vehicleId], references: [id])
+  fromAddress      Address          @relation("shipmentsFromAddress", fields: [fromAddressId], references: [id])
+  toAddress        Address          @relation("shipmentsToAddress", fields: [toAddressId], references: [id])
+  fromCountry      Country?         @relation("shipmentsFromCountry", fields: [fromCountryId], references: [id])
+  toCountry        Country?         @relation("shipmentsToCountry", fields: [toCountryId], references: [id])
+
+  packages         Package[]
+  trackingEvents   TrackingEvent[]
+  statusHistory    ShipmentStatusHistory[]
+  assignments      Assignment[]
+  manifests        Manifest[]
+  waybills         Waybill[]
+  documents        ShipmentDocument[]
+  customsDeclaration CustomsDeclaration?
+  ratings          Rating[]
+  parcelCategory   ParcelCategory?  @relation(fields: [parcelCategoryId], references: [id])
+  proofImages      ShipmentProofImage[]
+
+  @@index([trackingNumber])
+  @@index([status])
+  @@map("shipments")
+}
+
+enum ShipmentCategory {
+  DOMESTIC
+  INTERNATIONAL
+  SPECIAL_TRANSPORT
+}
+
+enum TransportMode {
+  ROAD
+  AIR
+  SEA
+  COURIER
+  RAIL
+}
+
+enum ServiceLevel {
+  STANDARD
+  EXPRESS
+  SAME_DAY
+  NEXT_DAY
+  ECONOMY
+  PRIORITY
+}
+
+enum FulfillmentType {
+  DOOR_TO_DOOR
+  DOOR_TO_PICKUP
+  PICKUP_TO_DOOR
+  PICKUP_TO_PICKUP
+  WAREHOUSE_TO_DOOR
+  WAREHOUSE_TO_PICKUP
+}
+
+enum ShipmentStatus {
+  PENDING
+  QUOTE_CREATED
+  BOOKED
+  PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  AWAITING_PICKUP
+  DRIVER_ASSIGNED
+  ACCEPTED
+  OUT_FOR_PICKUP
+  PICKED_UP
+  IN_TRANSIT
+  ONGOING
+  ARRIVED_DESTINATION
+  ARRIVED_COUNTRY
+  CUSTOMS_REVIEW
+  CUSTOMS_CLEARED
+  WAREHOUSE
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNING
+  RETURNED
+  FAILED
+  CANCELLED
+  ON_HOLD
+}
+
+model ShipmentStatusHistory {
+  id          String         @id @default(cuid())
+  shipmentId  String
+  status      ShipmentStatus
+  notes       String?
+  location    String?
+  latitude    Float?
+  longitude   Float?
+  createdBy   String?
+  createdAt   DateTime       @default(now())
+
+  shipment    Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt])
+  @@map("shipment_status_history")
+}
+
+// ============================================================
+// PACKAGES
+// ============================================================
+
+model Package {
+  id            String       @id @default(cuid())
+  shipmentId    String
+  barcode       String       @unique
+  type          PackageType
+  weightKg      Decimal      @db.Decimal(8, 2)
+  lengthCm      Decimal?     @db.Decimal(8, 2)
+  widthCm       Decimal?     @db.Decimal(8, 2)
+  heightCm      Decimal?     @db.Decimal(8, 2)
+  volumetricWeightKg Decimal? @db.Decimal(8, 2)
+  declaredValue Decimal?     @db.Decimal(12, 2)
+  description   String?
+  isFragile     Boolean      @default(false)
+  status        PackageStatus @default(CREATED)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  shipment      Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("packages")
+}
+
+enum PackageType {
+  DOCUMENT
+  PARCEL
+  BOX
+  BAG
+  PALLET
+  CRATE
+  CARGO
+  ENVELOPE
+  OTHER
+}
+
+enum PackageStatus {
+  CREATED
+  SCANNED_AT_PICKUP
+  SCANNED_AT_WAREHOUSE
+  LOADED
+  DEPARTED
+  ARRIVED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DAMAGED
+  LOST
+}
+
+// ============================================================
+// TRACKING
+// ============================================================
+
+model TrackingEvent {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  event       String
+  status      ShipmentStatus
+  description String
+  location    String?
+  latitude    Float?
+  longitude   Float?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt])
+  @@map("tracking_events")
+}
+
+// ============================================================
+// ASSIGNMENTS & MANIFESTS
+// ============================================================
+
+model Assignment {
+  id           String       @id @default(cuid())
+  shipmentId   String
+  driverId     String
+  vehicleId    String?
+  assignedById String
+  status       AssignmentStatus @default(ASSIGNED)
+  assignedAt   DateTime     @default(now())
+  acceptedAt   DateTime?
+  completedAt  DateTime?
+  notes        String?
+
+  shipment     Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  driver       Driver       @relation(fields: [driverId], references: [id])
+  vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id])
+  assignedBy   User         @relation("assignmentsAssignedBy", fields: [assignedById], references: [id])
+
+  @@map("assignments")
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  ACCEPTED
+  REJECTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Manifest {
+  id              String       @id @default(cuid())
+  manifestNumber  String       @unique
+  routeId         String?
+  driverId        String?
+  vehicleId       String?
+  createdById     String
+  departureAt     DateTime?
+  arrivalAt       DateTime?
+  totalShipments  Int          @default(0)
+  totalWeightKg   Decimal      @default(0) @db.Decimal(8, 2)
+  status          ManifestStatus @default(PENDING)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  route           Route?       @relation(fields: [routeId], references: [id])
+  driver          Driver?      @relation(fields: [driverId], references: [id])
+  vehicle         Vehicle?     @relation(fields: [vehicleId], references: [id])
+  createdBy       User         @relation("manifestsCreatedBy", fields: [createdById], references: [id])
+  shipments       Shipment[]
+
+  @@map("manifests")
+}
+
+enum ManifestStatus {
+  PENDING
+  LOADING
+  DEPARTED
+  IN_TRANSIT
+  ARRIVED
+  COMPLETED
+  CANCELLED
+}
+
+// ============================================================
+// WAYBILLS
+// ============================================================
+
+model Waybill {
+  id              String   @id @default(cuid())
+  waybillNumber   String   @unique
+  shipmentId      String
+  senderName      String
+  senderPhone     String
+  senderAddress   String
+  recipientName   String
+  recipientPhone  String
+  recipientAddress String
+  origin          String
+  destination     String
+  weightKg        Decimal  @db.Decimal(8, 2)
+  packageType     PackageType
+  transportMode   TransportMode
+  totalAmount     Decimal  @db.Decimal(12, 2)
+  currency        String   @default("TZS")
+  barcodeData     String?
+  qrCodeData      String?
+  terms           String?
+  createdAt       DateTime @default(now())
+
+  shipment        Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("waybills")
+}
+
+// ============================================================
+// CUSTOMS
+// ============================================================
+
+model CustomsDeclaration {
+  id              String           @id @default(cuid())
+  shipmentId      String           @unique
+  reviewedById    String?
+  hsCode          String?
+  declaredValue   Decimal          @db.Decimal(12, 2)
+  currency        String           @default("TZS")
+  description     String?
+  countryOfOrigin String?
+  importExportType String          @default("IMPORT")
+  customsOfficer  String?
+  clearanceDate   DateTime?
+  purpose         String?
+  commercialInvoiceUrl String?
+  packingListUrl  String?
+  certificateOfOriginUrl String?
+  status          CustomsStatus    @default(PENDING)
+  notes           String?
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  shipment        Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  reviewedBy      User?            @relation(fields: [reviewedById], references: [id])
+
+  @@map("customs_declarations")
+}
+
+enum CustomsStatus {
+  PENDING
+  SUBMITTED
+  UNDER_REVIEW
+  CLEARED
+  HELD
+  REJECTED
+}
+
+// ============================================================
+// DOCUMENTS
+// ============================================================
+
+model ShipmentDocument {
+  id             String   @id @default(cuid())
+  shipmentId     String
+  type           DocumentType
+  documentNumber String?
+  fileName       String?
+  fileUrl        String?
+  fileSize       Int?
+  mimeType       String?
+  status         String   @default("PENDING")
+  uploadedBy     String?
+  verifiedBy     String?
+  verifiedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  shipment       Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("shipment_documents")
+}
+
+enum DocumentType {
+  INVOICE
+  PACKING_LIST
+  BILL_OF_LADING
+  AIRWAY_BILL
+  WAYBILL
+  CUSTOMS_DECLARATION
+  CERTIFICATE_OF_ORIGIN
+  PROOF_OF_DELIVERY
+  ID_DOCUMENT
+  INSURANCE_CERTIFICATE
+  EXPORT_PERMIT
+  IMPORT_PERMIT
+  HEALTH_CERT
+  PHYTO_CERT
+  COMMERCIAL_INVOICE
+  PROFORMA_INVOICE
+  PHOTO
+  OTHER
+}
+
+// ============================================================
+// PAYMENTS & INVOICES
+// ============================================================
+
+model Payment {
+  id              String         @id @default(cuid())
+  paymentRef      String         @unique
+  orderId         String
+  payerId         String?
+  amount          Decimal        @db.Decimal(12, 2)
+  currency        String         @default("TZS")
+  method          PaymentMethod  @default(MANUAL)
+  status          PaymentStatus  @default(PENDING)
+  transactionId   String?
+  paidAt          DateTime?
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payer           User?          @relation(fields: [payerId], references: [id])
+
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  MOBILE_MONEY
+  BANK_TRANSFER
+  CARD
+  CASH
+  CREDIT
+  MANUAL
+  WALLET
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  invoiceNumber   String   @unique
+  orderId         String
+  organizationId  String?
+  amount          Decimal  @db.Decimal(12, 2)
+  currency        String   @default("TZS")
+  tax             Decimal  @db.Decimal(12, 2) @default(0)
+  total           Decimal  @db.Decimal(12, 2)
+  status          String   @default("UNPAID")
+  dueDate         DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String?
+  type        String
+  title       String
+  message     String
+  channel     NotificationChannel @default(PUSH)
+  data        Json?
+  isRead      Boolean  @default(false)
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+// ============================================================
+// RATINGS & REVIEWS
+// ============================================================
+
+model Rating {
+  id          String   @id @default(cuid())
+  shipmentId  String?
+  customerId  String?
+  driverId    String?
+  rating      Int
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  shipment    Shipment? @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  driver      Driver?   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@map("ratings")
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+  changes     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+// ============================================================
+// PARCEL CATEGORIES & WEIGHTS (from drivemond)
+// ============================================================
+
+model ParcelCategory {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  image       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shipments   Shipment[]
+  fareWeights ParcelFareWeight[]
+
+  @@map("parcel_categories")
+}
+
+model ParcelWeight {
+  id          String   @id @default(cuid())
+  minWeight   Decimal  @db.Decimal(8, 2)
+  maxWeight   Decimal  @db.Decimal(8, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fareWeights ParcelFareWeight[]
+
+  @@map("parcel_weights")
+}
+
+// ============================================================
+// PARCEL FARES (zone-based, from drivemond)
+// ============================================================
+
+model ParcelFare {
+  id                    String   @id @default(cuid())
+  zoneId                String?
+  baseFare              Decimal  @default(0) @db.Decimal(12, 2)
+  returnFee             Decimal  @default(0) @db.Decimal(12, 2)
+  cancellationFee       Decimal  @default(0) @db.Decimal(12, 2)
+  baseFarePerKm         Decimal  @default(0) @db.Decimal(12, 2)
+  cancellationFeePercent Decimal @default(0) @db.Decimal(5, 2)
+  minCancellationFee    Decimal  @default(0) @db.Decimal(12, 2)
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  fareWeights           ParcelFareWeight[]
+
+  @@map("parcel_fares")
+}
+
+model ParcelFareWeight {
+  id              String   @id @default(cuid())
+  parcelFareId    String
+  parcelWeightId  String
+  parcelCategoryId String?
+  baseFare        Decimal  @default(0) @db.Decimal(12, 2)
+  returnFee       Decimal  @default(0) @db.Decimal(12, 2)
+  cancellationFee Decimal  @default(0) @db.Decimal(12, 2)
+  farePerKm       Decimal  @default(0) @db.Decimal(12, 2)
+  zoneId          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  parcelFare      ParcelFare     @relation(fields: [parcelFareId], references: [id], onDelete: Cascade)
+  parcelWeight    ParcelWeight   @relation(fields: [parcelWeightId], references: [id])
+  parcelCategory  ParcelCategory? @relation(fields: [parcelCategoryId], references: [id])
+
+  @@map("parcel_fare_weights")
+}
+
+// ============================================================
+// SURGE PRICING (from drivemond)
+// ============================================================
+
+model SurgePricing {
+  id              String   @id @default(cuid())
+  name            String
+  surgePercentage Decimal  @default(0) @db.Decimal(5, 2)
+  isActive        Boolean  @default(true)
+  startDate       DateTime
+  endDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  timeSlots       SurgePricingTimeSlot[]
+
+  @@map("surge_pricings")
+}
+
+model SurgePricingTimeSlot {
+  id              String   @id @default(cuid())
+  surgePricingId  String
+  dayOfWeek       Int      @default(0)
+  startTime       String
+  endTime         String
+  createdAt       DateTime @default(now())
+
+  surgePricing    SurgePricing @relation(fields: [surgePricingId], references: [id], onDelete: Cascade)
+
+  @@map("surge_pricing_time_slots")
+}
+
+// ============================================================
+// PAYMENT GATEWAYS (from drivemond - Selcom, Azampesa, etc.)
+// ============================================================
+
+model PaymentGateway {
+  id            String   @id @default(cuid())
+  name          String
+  gateway       String   @unique
+  mode          String   @default("test")
+  liveValues    Json?
+  testValues    Json?
+  isActive      Boolean  @default(true)
+  additionalData Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  paymentRequests PaymentRequest[]
+
+  @@map("payment_gateways")
+}
+
+model PaymentRequest {
+  id              String   @id @default(cuid())
+  paymentGatewayId String?
+  payerId         String?
+  paymentAmount   Decimal  @default(0) @db.Decimal(12, 2)
+  currencyCode    String   @default("TZS")
+  isPaid          Boolean  @default(false)
+  payerInformation Json?
+  receiverInformation Json?
+  externalRedirectLink String?
+  paymentPlatform String?
+  additionalData  Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  paymentGateway  PaymentGateway? @relation(fields: [paymentGatewayId], references: [id])
+
+  @@map("payment_requests")
+}
+
+// ============================================================
+// SHIPMENT PROOF IMAGES (from drivemond)
+// ============================================================
+
+model ShipmentProofImage {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  imageUrl    String
+  uploadedBy  String?
+  createdAt   DateTime @default(now())
+
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("shipment_proof_images")
+}
