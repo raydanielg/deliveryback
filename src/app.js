@@ -39,6 +39,8 @@ dotenv.config()
 
 const app = express()
 
+app.set("trust proxy", 1)
+
 app.use(
   cors({
     origin: process.env.CLIENT_URL || "http://localhost:3000",
@@ -49,6 +51,7 @@ app.use(
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   contentSecurityPolicy: {
+    useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
@@ -56,6 +59,10 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "https:"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
     },
+  },
+  strictTransportSecurity: {
+    maxAge: 0,
+    includeSubDomains: false,
   },
 }))
 app.use(express.json({ limit: "10mb" }))
