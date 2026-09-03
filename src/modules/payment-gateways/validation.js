@@ -18,6 +18,8 @@ export const initiatePaymentSchema = z.object({
   payerPhone: z.string().optional(),
   payerEmail: z.string().optional(),
   payerName: z.string().optional(),
+  paymentChannel: z.enum(["wallet", "selcompesa"]).default("wallet"),
   redirectUrl: z.string().url().optional(),
+  cancelUrl: z.string().url().optional(),
   webhookUrl: z.string().url().optional(),
 })

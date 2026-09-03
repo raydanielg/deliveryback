@@ -125,8 +125,35 @@ export async function initiatePayment(req, res, next) {
   } catch (err) { next(err) }
 }
 
-// --- Selcom Payment Integration ---
-// Based on drivemond SelcomController
+// --- Selcom Payment Integration (Collection API) ---
+// Uses Selcom Push USSD flow: create-order-minimal → wallet-payment/selcompesa-payment
+
+function generateSelcomHeaders(apiKey, apiSecret, requestData, signedFields) {
+  const timestamp = new Date().toISOString()
+  const authorization = Buffer.from(apiKey).toString("hex")
+
+  const fields = signedFields.split(",")
+  let signingString = `timestamp=${timestamp}`
+  fields.forEach(f => {
+    signingString += `&${f}=${requestData[f] || ""}`
+  })
+
+  const digest = crypto
+    .createHmac("sha256", apiSecret)
+    .update(signingString)
+    .digest("base64")
+
+  return {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": `SELCOM ${authorization}`,
+    "Digest-Method": "HS256",
+    "Digest": digest,
+    "Timestamp": timestamp,
+    "Signed-Fields": signedFields,
+  }
+}
+
 async function initiateSelcomPayment(data, config) {
   const {
     SELCOM_BASE_URL,
@@ -143,49 +170,127 @@ async function initiateSelcomPayment(data, config) {
   const buyerName = data.payerName || "Customer"
   const buyerPhone = data.payerPhone || ""
   const buyerEmail = data.payerEmail || ""
+  const paymentChannel = data.paymentChannel || "wallet" // wallet | selcompesa
 
-  // Generate signed request (Selcom uses HMAC-SHA256)
-  const timestamp = new Date().toISOString().replace(/[-:T]/g, "").split(".")[0]
-  const signedFields = "order_id,version,timestamp,buyer_user_id,buyer_name,buyer_phone,buyer_email,amount,currency"
-  const requestData = {
+  // Step 1: Create order minimal
+  const orderData = {
     vendor: SELCOM_VENDOR,
     order_id: orderId,
-    version: "1.0",
-    timestamp,
-    buyer_user_id: data.payerPhone || "guest",
-    buyer_name: buyerName,
-    buyer_phone: buyerPhone,
     buyer_email: buyerEmail,
+    buyer_name: buyerName,
+    buyer_user_id: data.payerPhone || "guest",
+    buyer_phone: buyerPhone,
     amount: data.amount,
     currency: data.currency,
     redirect_url: data.redirectUrl || "",
-    webhook_url: data.webhookUrl || "",
-    no_of_items: "1",
+    cancel_url: data.cancelUrl || "",
+    webhook: data.webhookUrl || "",
+    buyer_remarks: "None",
+    merchant_remarks: "None",
+    no_of_items: 1,
   }
 
-  // Generate HMAC-SHA256 signature
-  const signedValues = signedFields.split(",").map(f => requestData[f] || "").join(",")
-  const signature = crypto
-    .createHmac("sha256", SELCOM_SECRET_KEY)
-    .update(signedValues)
-    .digest("base64")
+  const orderSignedFields = "vendor,order_id,buyer_email,buyer_name,buyer_user_id,buyer_phone,amount,currency,redirect_url,cancel_url,webhook,buyer_remarks,merchant_remarks,no_of_items"
+  const orderHeaders = generateSelcomHeaders(SELCOM_API_KEY, SELCOM_SECRET_KEY, orderData, orderSignedFields)
 
-  const response = await fetch(`${SELCOM_BASE_URL}/checkout/order/create_and_pay`, {
+  const orderResponse = await fetch(`${SELCOM_BASE_URL}/checkout/create-order-minimal`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `SELCOM ${SELCOM_API_KEY}:${signature}`,
-      "Signed-Fields": signedFields,
-    },
-    body: JSON.stringify(requestData),
+    headers: orderHeaders,
+    body: JSON.stringify(orderData),
   })
 
-  const result = await response.json()
+  const orderResult = await orderResponse.json()
+
+  if (orderResult.result !== "SUCCESS") {
+    throw new Error(`Selcom order creation failed: ${orderResult.message || JSON.stringify(orderResult)}`)
+  }
+
+  // Step 2: Push USSD payment (wallet-payment or selcompesa-payment)
+  const transid = `TRX-${Date.now()}`
+  const paymentData = {
+    transid,
+    order_id: orderId,
+    msisdn: buyerPhone,
+  }
+
+  const paymentSignedFields = "transid,order_id,msisdn"
+  const paymentHeaders = generateSelcomHeaders(SELCOM_API_KEY, SELCOM_SECRET_KEY, paymentData, paymentSignedFields)
+
+  const paymentEndpoint = paymentChannel === "selcompesa" ? "/checkout/selcompesa-payment" : "/checkout/wallet-payment"
+  const paymentResponse = await fetch(`${SELCOM_BASE_URL}${paymentEndpoint}`, {
+    method: "POST",
+    headers: paymentHeaders,
+    body: JSON.stringify(paymentData),
+  })
+
+  const paymentResult = await paymentResponse.json()
 
   return {
-    redirectUrl: result.data?.payment_url || result.data?.checkout_url || null,
-    additionalData: { orderId, selcomResponse: result },
+    redirectUrl: orderResult.data?.[0]?.payment_gateway_url || null,
+    additionalData: {
+      orderId,
+      transid,
+      paymentChannel,
+      orderResult,
+      paymentResult,
+    },
   }
+}
+
+// --- Selcom Order Status Check ---
+export async function getSelcomOrderStatus(req, res, next) {
+  try {
+    const { orderId } = req.query
+    if (!orderId) return res.status(400).json({ success: false, message: "orderId is required" })
+
+    const gateway = await prisma.paymentGateway.findFirst({
+      where: { gateway: "selcom", isActive: true },
+    })
+    if (!gateway) return res.status(404).json({ success: false, message: "Selcom gateway not found or inactive" })
+
+    const config = gateway.mode === "live" ? gateway.liveValues : gateway.testValues
+    const { SELCOM_BASE_URL, SELCOM_API_KEY, SELCOM_SECRET_KEY } = config
+
+    const queryParams = { order_id: orderId }
+    const signedFields = "order_id"
+    const headers = generateSelcomHeaders(SELCOM_API_KEY, SELCOM_SECRET_KEY, queryParams, signedFields)
+
+    const response = await fetch(`${SELCOM_BASE_URL}/checkout/order-status?order_id=${orderId}`, {
+      method: "GET",
+      headers,
+    })
+
+    const result = await response.json()
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
+}
+
+// --- Selcom Cancel Order ---
+export async function cancelSelcomOrder(req, res, next) {
+  try {
+    const { orderId } = req.query
+    if (!orderId) return res.status(400).json({ success: false, message: "orderId is required" })
+
+    const gateway = await prisma.paymentGateway.findFirst({
+      where: { gateway: "selcom", isActive: true },
+    })
+    if (!gateway) return res.status(404).json({ success: false, message: "Selcom gateway not found or inactive" })
+
+    const config = gateway.mode === "live" ? gateway.liveValues : gateway.testValues
+    const { SELCOM_BASE_URL, SELCOM_API_KEY, SELCOM_SECRET_KEY } = config
+
+    const queryParams = { order_id: orderId }
+    const signedFields = "order_id"
+    const headers = generateSelcomHeaders(SELCOM_API_KEY, SELCOM_SECRET_KEY, queryParams, signedFields)
+
+    const response = await fetch(`${SELCOM_BASE_URL}/checkout/cancel-order?order_id=${orderId}`, {
+      method: "DELETE",
+      headers,
+    })
+
+    const result = await response.json()
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
 }
 
 // --- Azampesa Payment Integration ---
@@ -253,7 +358,7 @@ async function initiateAzampesaPayment(data, config) {
 
 export async function selcomWebhook(req, res, next) {
   try {
-    const { order_id, payment_status, transid } = req.body
+    const { order_id, payment_status, transid, reference, channel, amount, phone, result, resultcode } = req.body
 
     const paymentRequest = await prisma.paymentRequest.findFirst({
       where: { additionalData: { path: ["orderId"], equals: order_id } },
@@ -266,18 +371,23 @@ export async function selcomWebhook(req, res, next) {
     if (payment_status === "COMPLETED" || payment_status === "SUCCESS") {
       await prisma.paymentRequest.update({
         where: { id: paymentRequest.id },
-        data: { isPaid: true },
+        data: {
+          isPaid: true,
+          additionalData: {
+            ...paymentRequest.additionalData,
+            webhookData: { transid, reference, channel, amount, phone, payment_status, result, resultcode },
+          },
+        },
       })
 
-      // Update related order payment status
+      // Update related shipment payment status if payer exists
       if (paymentRequest.payerId) {
-        // Find and update the order
-        const order = await prisma.order.findFirst({
+        const shipment = await prisma.shipment.findFirst({
           where: { payments: { some: { paymentRef: order_id } } },
         })
-        if (order) {
-          await prisma.order.update({
-            where: { id: order.id },
+        if (shipment) {
+          await prisma.shipment.update({
+            where: { id: shipment.id },
             data: { paymentStatus: "PAID" },
           })
         }

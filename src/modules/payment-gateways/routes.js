@@ -3,6 +3,7 @@ import {
   listPaymentGateways, getPaymentGateway, createPaymentGateway,
   updatePaymentGateway, deletePaymentGateway, togglePaymentGateway,
   initiatePayment, selcomWebhook, azampesaCallback, getActiveGateways,
+  getSelcomOrderStatus, cancelSelcomOrder,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
@@ -20,6 +21,10 @@ router.use(authenticate)
 
 // Initiate payment (all authenticated users)
 router.post("/initiate", initiatePayment)
+
+// Selcom order status & cancel (all authenticated users)
+router.get("/selcom/order-status", getSelcomOrderStatus)
+router.delete("/selcom/cancel-order", cancelSelcomOrder)
 
 // Gateway CRUD (admin only)
 router.get("/", authorizeRoles("SUPER_ADMIN", "FINANCE"), listPaymentGateways)
