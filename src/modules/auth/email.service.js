@@ -6,48 +6,60 @@ function getTransporter() {
   if (!transporter) {
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || "587"),
-      secure: parseInt(process.env.SMTP_PORT || "587") === 465,
+      port: parseInt(process.env.SMTP_PORT || "465"),
+      secure: parseInt(process.env.SMTP_PORT || "465") === 465,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
+      },
+      tls: {
+        rejectUnauthorized: false,
       },
     })
   }
   return transporter
 }
 
+const EMAIL_WRAPPER = (content) => `
+  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 0; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+    <div style="background: linear-gradient(135deg, #E8732A 0%, #F2905A 100%); padding: 32px 24px; text-align: center;">
+      <h1 style="color: #ffffff; font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">Xerin Express</h1>
+      <p style="color: rgba(255,255,255,0.8); font-size: 13px; margin: 6px 0 0 0;">Deliver smarter, ship faster</p>
+    </div>
+    <div style="padding: 32px 24px;">
+      ${content}
+    </div>
+    <div style="background: #f8f9fa; padding: 20px 24px; text-align: center;">
+      <p style="color: #999; font-size: 12px; margin: 0;">
+        Xerin Express &copy; ${new Date().getFullYear()}. All rights reserved.<br/>
+        <a href="mailto:support@xerinexpress.com" style="color: #E8732A; text-decoration: none;">support@xerinexpress.com</a>
+      </p>
+    </div>
+  </div>
+`
+
 export async function sendOtpEmail(email, otp, name) {
   const transport = getTransporter()
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || "Delivery Option <no-reply@deliveryoption.com>",
+    from: process.env.SMTP_FROM || "Xerin Express <contact@neg.co.tz>",
     to: email,
-    subject: "Password Reset - Delivery Option",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #16a34a; font-size: 28px;">Delivery Option</h1>
+    subject: "Password Reset - Xerin Express",
+    html: EMAIL_WRAPPER(`
+      <h2 style="color: #1a1a1a; font-size: 20px; margin: 0 0 16px 0;">Password Reset Request</h2>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;">Hi ${name},</p>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;">
+        You requested a password reset. Use the verification code below to reset your password:
+      </p>
+      <div style="text-align: center; margin: 28px 0;">
+        <div style="display: inline-block; background: #fff5ed; border: 2px solid #E8732A; border-radius: 12px; padding: 20px 40px;">
+          <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #E8732A;">${otp}</span>
         </div>
-        <h2 style="color: #333;">Password Reset Request</h2>
-        <p style="color: #555; font-size: 16px;">Hi ${name},</p>
-        <p style="color: #555; font-size: 16px;">
-          You requested a password reset. Use the verification code below to reset your password:
-        </p>
-        <div style="text-align: center; margin: 30px 0;">
-          <div style="display: inline-block; background: #f0fdf4; border: 2px solid #16a34a; border-radius: 12px; padding: 20px 40px;">
-            <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #16a34a;">${otp}</span>
-          </div>
-        </div>
-        <p style="color: #555; font-size: 16px;">
-          This code will expire in <strong>10 minutes</strong>. If you didn't request this, please ignore this email.
-        </p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
-        <p style="color: #999; font-size: 14px; text-align: center;">
-          Delivery Option &copy; ${new Date().getFullYear()}. All rights reserved.
-        </p>
       </div>
-    `,
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        This code will expire in <strong>10 minutes</strong>. If you didn't request this, please ignore this email.
+      </p>
+    `),
   }
 
   await transport.sendMail(mailOptions)
@@ -57,24 +69,21 @@ export async function sendWelcomeEmail(email, name) {
   const transport = getTransporter()
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || "Delivery Option <no-reply@deliveryoption.com>",
+    from: process.env.SMTP_FROM || "Xerin Express <contact@neg.co.tz>",
     to: email,
-    subject: "Welcome to Delivery Option!",
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #16a34a; font-size: 28px;">Delivery Option</h1>
-        </div>
-        <h2 style="color: #333;">Welcome aboard, ${name}!</h2>
-        <p style="color: #555; font-size: 16px;">
-          Your account has been created successfully. You can now log in and start using Delivery Option.
-        </p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
-        <p style="color: #999; font-size: 14px; text-align: center;">
-          Delivery Option &copy; ${new Date().getFullYear()}. All rights reserved.
-        </p>
+    subject: "Welcome to Xerin Express!",
+    html: EMAIL_WRAPPER(`
+      <h2 style="color: #1a1a1a; font-size: 20px; margin: 0 0 16px 0;">Welcome aboard, ${name}!</h2>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;">
+        Your account has been created successfully. You can now log in and start using Xerin Express to manage your shipments, track packages, and get instant quotes.
+      </p>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="${process.env.CLIENT_URL || 'https://deliveryoptionfrontend-web.vercel.app'}/auth" style="display: inline-block; background: #E8732A; color: #ffffff; font-size: 15px; font-weight: 700; padding: 14px 36px; border-radius: 10px; text-decoration: none;">Get Started</a>
       </div>
-    `,
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        If you have any questions, feel free to reach out to our support team.
+      </p>
+    `),
   }
 
   await transport.sendMail(mailOptions)
