@@ -4,6 +4,7 @@ import path from "path"
 import { calculateQuote } from "../pricing/service.js"
 import { calculateVolumetricWeight, getChargeableWeight } from "../pricing/service.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
+import { createNotification } from "../notifications/controller.js"
 import { createShipmentSchema, updateShipmentStatusSchema, assignShipmentSchema, verifyOtpSchema, uploadProofSchema, scheduleShipmentSchema, createParcelShipmentSchema } from "./validation.js"
 
 function generateTrackingNumber() {
@@ -150,6 +151,19 @@ export async function createShipment(req, res, next) {
         createdBy: req.user.id,
       },
     })
+
+    // Notify the user who created the shipment
+    try {
+      await createNotification(
+        req.user.id,
+        "SHIPMENT_CREATED",
+        "Shipment Created",
+        `Your shipment ${shipment.trackingNumber} from ${fromAddress.city} to ${toAddress.city} has been booked successfully.`,
+        { shipmentId: shipment.id, trackingNumber: shipment.trackingNumber }
+      )
+    } catch (notifErr) {
+      console.warn("Shipment notification failed:", notifErr.message)
+    }
 
     res.status(201).json({
       success: true,

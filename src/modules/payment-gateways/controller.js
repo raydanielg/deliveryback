@@ -1,5 +1,6 @@
 import prisma from "../../prisma/client.js"
 import { createPaymentGatewaySchema, initiatePaymentSchema } from "./validation.js"
+import { createNotification } from "../notifications/controller.js"
 import crypto from "crypto"
 
 // --- Payment Gateway CRUD ---
@@ -390,6 +391,18 @@ export async function selcomWebhook(req, res, next) {
             where: { id: shipment.id },
             data: { paymentStatus: "PAID" },
           })
+
+          try {
+            await createNotification(
+              paymentRequest.payerId,
+              "PAYMENT_CONFIRMED",
+              "Payment Confirmed",
+              `Your payment for shipment ${shipment.trackingNumber} has been confirmed successfully.`,
+              { shipmentId: shipment.id, trackingNumber: shipment.trackingNumber }
+            )
+          } catch (notifErr) {
+            console.warn("Payment gateway notification failed:", notifErr.message)
+          }
         }
       }
     }

@@ -1,5 +1,6 @@
 import prisma from "../../prisma/client.js"
 import { z } from "zod"
+import { createNotification } from "../notifications/controller.js"
 
 const createPaymentSchema = z.object({
   orderId: z.string(),
@@ -66,6 +67,18 @@ export async function createPayment(req, res, next) {
         where: { orderId: data.orderId },
         data: { paymentStatus: "PAID", status: "PAYMENT_CONFIRMED" },
       })
+
+      try {
+        await createNotification(
+          order.createdById,
+          "PAYMENT_CONFIRMED",
+          "Payment Confirmed",
+          `Your payment of ${order.currency} ${Number(data.amount).toLocaleString()} for order ${order.orderNumber} has been confirmed.`,
+          { orderId: order.id, paymentRef: payment.paymentRef }
+        )
+      } catch (notifErr) {
+        console.warn("Payment notification failed:", notifErr.message)
+      }
     }
 
     res.status(201).json({ success: true, data: payment })

@@ -4,6 +4,7 @@ import prisma from "../../prisma/client.js"
 import { registerSchema, loginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
 import { generateOtp } from "../../utils/otp.js"
 import { sendOtpEmail, sendWelcomeEmail } from "./email.service.js"
+import { createNotification } from "../notifications/controller.js"
 
 function signToken(userId) {
   return jwt.sign({ userId }, process.env.JWT_SECRET, {
@@ -55,6 +56,18 @@ export async function register(req, res, next) {
       await sendWelcomeEmail(user.email, user.name)
     } catch (emailErr) {
       console.warn("Welcome email failed:", emailErr.message)
+    }
+
+    try {
+      await createNotification(
+        user.id,
+        "WELCOME",
+        "Welcome to Xerin Express!",
+        `Hello ${user.name}, your account has been created successfully. You can now create shipments, track packages, and manage your deliveries.`,
+        { role: user.role }
+      )
+    } catch (notifErr) {
+      console.warn("Welcome notification failed:", notifErr.message)
     }
 
     const token = signToken(user.id)
