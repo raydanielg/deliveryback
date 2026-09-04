@@ -76,14 +76,16 @@ export async function login(req, res, next) {
   try {
     const data = loginSchema.parse(req.body)
 
-    const user = await prisma.user.findUnique({
-      where: { email: data.email },
-    })
+    const isEmail = data.login.includes("@")
+
+    const user = isEmail
+      ? await prisma.user.findUnique({ where: { email: data.login.toLowerCase().trim() } })
+      : await prisma.user.findUnique({ where: { phone: data.login } })
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message: "Invalid email/phone or password.",
       })
     }
 
@@ -99,7 +101,7 @@ export async function login(req, res, next) {
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        message: "Invalid email or password.",
+        message: "Invalid email/phone or password.",
       })
     }
 
