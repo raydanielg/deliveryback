@@ -3,6 +3,7 @@ import {
   listPricingRules, createPricingRule, updatePricingRule,
   deletePricingRule, togglePricingRule,
   listSurcharges, createSurcharge, deleteSurcharge,
+  getModePricingConfig, updateModePricingConfig,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
@@ -198,5 +199,56 @@ router.post("/surcharges", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), 
  *         description: Insufficient permissions
  */
 router.delete("/surcharges/:id", authorizeRoles("SUPER_ADMIN"), deleteSurcharge)
+
+/**
+ * @swagger
+ * /api/v1/pricing/mode-config/{transportMode}:
+ *   get:
+ *     summary: Get mode-specific pricing configuration
+ *     description: Returns the pricing configuration for a specific transport mode (ROAD, RAIL, AIR).
+ *     tags: [Pricing]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: transportMode
+ *         required: true
+ *         schema: { type: string, enum: [ROAD, RAIL, AIR] }
+ *     responses:
+ *       200:
+ *         description: Mode-specific pricing configuration
+ */
+router.get("/mode-config/:transportMode", getModePricingConfig)
+
+/**
+ * @swagger
+ * /api/v1/pricing/mode-config/{transportMode}:
+ *   put:
+ *     summary: Update mode-specific pricing configuration
+ *     description: Updates base rate, per-kg rate, insurance rate, and tax rate for a transport mode. Admin only.
+ *     tags: [Pricing]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: transportMode
+ *         required: true
+ *         schema: { type: string, enum: [ROAD, RAIL, AIR] }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               baseRate: { type: number }
+ *               perKgRate: { type: number }
+ *               insuranceRate: { type: number }
+ *               taxRate: { type: number }
+ *     responses:
+ *       200:
+ *         description: Configuration updated
+ */
+router.put("/mode-config/:transportMode", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateModePricingConfig)
 
 export default router

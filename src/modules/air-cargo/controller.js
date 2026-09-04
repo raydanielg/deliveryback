@@ -1,5 +1,5 @@
 import prisma from "../../prisma/client.js"
-import { calculateVolumetricWeight, getChargeableWeight } from "../pricing/service.js"
+import { calculateVolumetricWeight, getChargeableWeight, calculateQuote } from "../pricing/service.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
 import { createAirCargoBookingSchema, acceptCargoSchema, createFlightDispatchSchema } from "./validation.js"
 
@@ -28,13 +28,35 @@ export async function createAirCargoBooking(req, res, next) {
     const volumetricWeight = calculateVolumetricWeight(data.lengthCm, data.widthCm, data.heightCm)
     const chargeableWeight = getChargeableWeight(data.actualWeightKg, volumetricWeight)
 
-    const baseRate = 15000
-    const perKgRate = 8000
-    const subtotal = baseRate + (Number(chargeableWeight) * perKgRate)
-    const insurancePremium = data.insuranceEnabled && data.declaredValue
-      ? Number(data.declaredValue) * 0.03 : 0
-    const tax = subtotal * 0.18
-    const total = subtotal + insurancePremium + tax
+    const quote = await calculateQuote({
+      category: data.category,
+      transportMode: "AIR",
+      serviceLevel: data.serviceLevel || "STANDARD",
+      actualWeightKg: data.actualWeightKg,
+      lengthCm: data.lengthCm,
+      widthCm: data.widthCm,
+      heightCm: data.heightCm,
+      insuranceEnabled: data.insuranceEnabled,
+      declaredValue: data.declaredValue || 0,
+      currency: "TZS",
+    })
+
+    let subtotal, insurancePremium, tax, total
+
+    if (quote.requiresCustomQuote) {
+      const baseRate = 15000
+      const perKgRate = 8000
+      subtotal = baseRate + (Number(chargeableWeight) * perKgRate)
+      insurancePremium = data.insuranceEnabled && data.declaredValue
+        ? Number(data.declaredValue) * 0.03 : 0
+      tax = subtotal * 0.18
+      total = subtotal + insurancePremium + tax
+    } else {
+      subtotal = quote.subtotal
+      insurancePremium = quote.insurancePremium
+      tax = quote.tax
+      total = quote.total
+    }
 
     const fromAddress = await prisma.address.create({
       data: {

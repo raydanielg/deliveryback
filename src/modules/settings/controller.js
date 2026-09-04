@@ -2,7 +2,7 @@ import prisma from "../../prisma/client.js"
 
 // In-memory / persistent config store with sensible production defaults
 let mapSettingsState = {
-  provider: "openstreetmap", // "openstreetmap", "google_maps", "mapbox", "maptiler", "carto_dark", "carto_voyager"
+  provider: "google_maps", // "openstreetmap", "google_maps", "mapbox", "maptiler", "carto_dark", "carto_voyager"
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || "",
   mapboxAccessToken: process.env.MAPBOX_ACCESS_TOKEN || "",
   maptilerApiKey: process.env.MAPTILER_API_KEY || "",
@@ -113,11 +113,22 @@ export async function getPublicMapSettings(req, res, next) {
       effectiveTileUrl = `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${mapSettingsState.maptilerApiKey}`
     }
 
+    // Build Google Maps tile URLs if Google Maps is the active provider
+    let googleMapsTileUrl = null
+    let googleMapsApiKey = null
+    if (mapSettingsState.provider === "google_maps" && mapSettingsState.googleMapsApiKey) {
+      googleMapsApiKey = mapSettingsState.googleMapsApiKey
+      googleMapsTileUrl = `https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&key=${mapSettingsState.googleMapsApiKey}`
+      effectiveTileUrl = googleMapsTileUrl
+    }
+
     res.json({
       success: true,
       data: {
         provider: mapSettingsState.provider,
         tileUrl: effectiveTileUrl,
+        googleMapsApiKey: googleMapsApiKey || undefined,
+        googleMapsTileUrl: googleMapsTileUrl,
         defaultLatitude: mapSettingsState.defaultLatitude,
         defaultLongitude: mapSettingsState.defaultLongitude,
         defaultZoom: mapSettingsState.defaultZoom,

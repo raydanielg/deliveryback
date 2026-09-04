@@ -82,6 +82,6 @@ router.get("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANA
  *       403:
  *         description: Insufficient permissions
  */
-router.put("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER"]), updateMapSettings)
+router.put("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]), updateMapSettings)
 
 export default router
