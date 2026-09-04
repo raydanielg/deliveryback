@@ -41,6 +41,7 @@ model User {
   manifests     Manifest[]      @relation("manifestsCreatedBy")
   handovers     ManifestHandover[] @relation("handoverCompletedBy")
   customsDeclarations CustomsDeclaration[]
+  blogPosts          BlogPost[]       @relation("blogPostsAuthor")
 
   @@index([email])
   @@map("users")
@@ -701,6 +702,34 @@ model Shipment {
   note             String?
   pickupNote       String?
 
+  // SGR Parcel Service fields
+  originStationId       String?
+  destinationStationId  String?
+  sgrServiceType        String?   // STATION_TO_STATION | DOOR_TO_STATION | STATION_TO_DOOR | DOOR_TO_DOOR
+  trainNumber           String?
+  trainDepartureAt      DateTime?
+  trainArrivalAt        DateTime?
+
+  // Air Cargo fields
+  awbNumber             String?   // Air Waybill number
+  flightNumber          String?
+  flightDepartureAt     DateTime?
+  flightArrivalAt       DateTime?
+  airportOrigin         String?   // Origin airport/city code
+  airportDestination    String?   // Destination airport/city code
+  airCargoServiceType   String?   // AIRPORT_TO_AIRPORT | DOOR_TO_AIRPORT | AIRPORT_TO_DOOR | DOOR_TO_DOOR
+  cargoType             String?   // GENERAL | PERISHABLE | DANGEROUS | FRAGILE | VALUABLE
+  specialHandling       String?   // Special handling instructions for air cargo
+
+  // Vehicle category for road transport (BODA_BODA | VAN | TRUCK)
+  vehicleCategory       String?
+
+  // Warehouse / Fulfillment Center fields
+  shelfBinLocation      String?
+  consolidationBatchId  String?
+  weighedAt             DateTime?
+  labeledAt             DateTime?
+
   isActive         Boolean          @default(true)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -730,6 +759,8 @@ model Shipment {
   proofImages      ShipmentProofImage[]
   station          Station?        @relation("stationShipments", fields: [stationId], references: [id])
   receivedAtStation Station?       @relation("stationReceivedShipments", fields: [receivedAtStationId], references: [id])
+  originStation    Station?        @relation("originStationShipments", fields: [originStationId], references: [id])
+  destinationStation Station?      @relation("destStationShipments", fields: [destinationStationId], references: [id])
   stationInventory StationInventory[]
   exceptions       ShipmentException[]
 
@@ -785,12 +816,18 @@ enum ShipmentStatus {
   ACCEPTED
   OUT_FOR_PICKUP
   PICKED_UP
+  RECEIVED_AT_STATION
+  VERIFIED_WEIGHED
+  CONSOLIDATED
+  READY_FOR_DISPATCH
+  LOADED_FOR_DISPATCH
   IN_TRANSIT
   ONGOING
   ARRIVED_DESTINATION
   ARRIVED_COUNTRY
   CUSTOMS_REVIEW
   CUSTOMS_CLEARED
+  READY_FOR_COLLECTION
   WAREHOUSE
   OUT_FOR_DELIVERY
   DELIVERED
@@ -1430,6 +1467,8 @@ model Station {
 
   shipments     Shipment[]   @relation("stationShipments")
   receivedShipments Shipment[] @relation("stationReceivedShipments")
+  originShipments   Shipment[] @relation("originStationShipments")
+  destShipments     Shipment[] @relation("destStationShipments")
   manifests     Manifest[]   @relation("stationManifests")
   inventory     StationInventory[]
   exceptions    ShipmentException[]
@@ -1503,6 +1542,88 @@ enum ExceptionStatus {
   RESOLVED
   ESCALATED
   CLOSED
+}
+
+// ============================================================
+// BLOG
+// ============================================================
+
+model BlogCategory {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  slug        String     @unique
+  description String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  posts       BlogPost[]
+
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id            String           @id @default(cuid())
+  title         String
+  slug          String           @unique
+  excerpt       String?
+  content       String
+  coverImage    String?
+  status        BlogPostStatus   @default(DRAFT)
+  isFeatured    Boolean          @default(false)
+  views         Int              @default(0)
+  readTime      Int?
+  seoTitle      String?
+  seoDescription String?
+  tags          String[]
+  authorId      String
+  categoryId    String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  publishedAt   DateTime?
+
+  author        User             @relation("blogPostsAuthor", fields: [authorId], references: [id])
+  category      BlogCategory?    @relation(fields: [categoryId], references: [id])
+  images        BlogImage[]
+  attachments   BlogAttachment[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([authorId])
+  @@map("blog_posts")
+}
+
+model BlogImage {
+  id        String   @id @default(cuid())
+  postId    String
+  url       String
+  caption   String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  post      BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("blog_images")
+}
+
+model BlogAttachment {
+  id         String   @id @default(cuid())
+  postId     String
+  url        String
+  fileName   String
+  fileType   String
+  fileSize   Int?
+  createdAt  DateTime @default(now())
+
+  post       BlogPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("blog_attachments")
+}
+
+enum BlogPostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
 }
 
 // ============================================================

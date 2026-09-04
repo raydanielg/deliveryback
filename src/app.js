@@ -37,6 +37,10 @@ import stationsRoutes from "./modules/stations/routes.js"
 import notificationServiceRoutes from "./modules/notification-service/routes.js"
 import exceptionsRoutes from "./modules/exceptions/routes.js"
 import capacityRoutes from "./modules/capacity/routes.js"
+import blogRoutes from "./modules/blog/routes.js"
+import sgrServiceRoutes from "./modules/sgr-service/routes.js"
+import airCargoRoutes from "./modules/air-cargo/routes.js"
+import warehouseRoutes from "./modules/warehouse/routes.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
 
 dotenv.config()
@@ -45,20 +49,14 @@ const app = express()
 
 app.set("trust proxy", 1)
 
-const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:3000,https://xerinexpress.com,https://www.xerinexpress.com,https://swg.xerinexpress.com")
-  .split(",")
-  .map((o) => o.trim())
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true)
-      } else {
-        callback(null, true)
-      }
-    },
+    origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+    exposedHeaders: ["Content-Range", "X-Content-Range"],
     credentials: true,
+    maxAge: 86400,
   })
 )
 
@@ -127,6 +125,10 @@ app.use("/api/v1/stations", stationsRoutes)
 app.use("/api/v1/notification-service", notificationServiceRoutes)
 app.use("/api/v1/exceptions", exceptionsRoutes)
 app.use("/api/v1/capacity", capacityRoutes)
+app.use("/api/v1/blog", blogRoutes)
+app.use("/api/v1/sgr", sgrServiceRoutes)
+app.use("/api/v1/air-cargo", airCargoRoutes)
+app.use("/api/v1/warehouse", warehouseRoutes)
 
 app.use(notFound)
 app.use(errorHandler)
