@@ -719,7 +719,7 @@ model Shipment {
   airportDestination    String?   // Destination airport/city code
   airCargoServiceType   String?   // AIRPORT_TO_AIRPORT | DOOR_TO_AIRPORT | AIRPORT_TO_DOOR | DOOR_TO_DOOR
   cargoType             String?   // GENERAL | PERISHABLE | DANGEROUS | FRAGILE | VALUABLE
-  specialHandling       String?   // Special handling instructions for air cargo
+  airCargoSpecialHandling String? // Special handling instructions for air cargo
 
   // Vehicle category for road transport (BODA_BODA | VAN | TRUCK)
   vehicleCategory       String?
