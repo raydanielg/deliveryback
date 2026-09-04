@@ -91,11 +91,12 @@ export async function login(req, res, next) {
   try {
     const data = loginSchema.parse(req.body)
 
-    const isEmail = data.login.includes("@")
+    const loginValue = (data.login || data.email || "").trim()
+    const isEmail = loginValue.includes("@")
 
     const user = isEmail
-      ? await prisma.user.findUnique({ where: { email: data.login.toLowerCase().trim() } })
-      : await prisma.user.findUnique({ where: { phone: data.login } })
+      ? await prisma.user.findUnique({ where: { email: loginValue.toLowerCase() } })
+      : await prisma.user.findUnique({ where: { phone: loginValue } })
 
     if (!user) {
       return res.status(401).json({

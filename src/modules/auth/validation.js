@@ -32,8 +32,16 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({
   login: z
     .string()
-    .min(1, "Email or phone is required"),
+    .min(1, "Email or phone is required")
+    .optional(),
+  email: z
+    .string()
+    .min(1, "Email or phone is required")
+    .optional(),
   password: z.string().min(1, "Password is required"),
+}).refine((data) => data.login || data.email, {
+  message: "Email or phone is required",
+  path: ["login"],
 })
 
 export const forgotPasswordSchema = z.object({
