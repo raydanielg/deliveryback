@@ -1,5 +1,7 @@
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
+import path from "path"
+import fs from "fs/promises"
 import prisma from "../../prisma/client.js"
 import { registerSchema, loginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
 import { generateOtp } from "../../utils/otp.js"
@@ -140,15 +142,50 @@ export async function login(req, res, next) {
 
 export async function getMe(req, res, next) {
   try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        avatar: true, isVerified: true, isActive: true,
+      },
+    })
+    if (!user) return res.status(404).json({ success: false, message: "User not found" })
     return res.status(200).json({
       success: true,
-      data: {
-        user: req.user,
-      },
+      data: { user },
     })
   } catch (error) {
     next(error)
   }
+}
+
+export async function updateProfile(req, res, next) {
+  try {
+    const { name, phone } = req.body
+    const data = {}
+    if (name) data.name = name
+    if (phone) data.phone = phone
+
+    if (req.file) {
+      const ext = req.file.originalname.split(".").pop() || "jpg"
+      const filename = `avatar-${req.user.id}-${Date.now()}.${ext}`
+      const uploadsDir = path.join(process.cwd(), "uploads", "avatars")
+      await fs.mkdir(uploadsDir, { recursive: true })
+      await fs.writeFile(path.join(uploadsDir, filename), req.file.buffer)
+      data.avatar = `/uploads/avatars/${filename}`
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data,
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        avatar: true, isVerified: true, isActive: true,
+      },
+    })
+
+    res.json({ success: true, data: { user }, message: "Profile updated successfully" })
+  } catch (err) { next(err) }
 }
 
 export async function forgotPassword(req, res, next) {

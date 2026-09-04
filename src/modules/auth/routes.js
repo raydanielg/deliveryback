@@ -1,14 +1,21 @@
 import { Router } from "express"
 import rateLimit from "express-rate-limit"
+import multer from "multer"
 import {
   register,
   login,
   getMe,
+  updateProfile,
   forgotPassword,
   verifyOtp,
   resetPassword,
 } from "./controller.js"
 import { authenticate } from "../../middleware/auth.js"
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+})
 
 const router = Router()
 
@@ -130,6 +137,40 @@ router.post("/login", authLimiter, login)
  *         description: Not authenticated - token missing or invalid
  */
 router.get("/me", authenticate, getMe)
+
+/**
+ * @swagger
+ * /api/auth/profile:
+ *   put:
+ *     summary: Update user profile (name, phone, avatar)
+ *     description: Updates the authenticated user's profile. Supports multipart/form-data for avatar image upload (max 5MB).
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string, description: "Full name" }
+ *               phone: { type: string, description: "Phone number" }
+ *               avatar: { type: string, format: binary, description: "Profile image file" }
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data: { type: object, properties: { user: { type: object } } }
+ *       401:
+ *         description: Not authenticated
+ */
+router.put("/profile", authenticate, upload.single("avatar"), updateProfile)
 
 /**
  * @swagger
