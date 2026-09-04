@@ -5,6 +5,7 @@ import {
   register,
   login,
   getMe,
+  getMyDetails,
   updateProfile,
   forgotPassword,
   verifyOtp,
@@ -137,6 +138,44 @@ router.post("/login", authLimiter, login)
  *         description: Not authenticated - token missing or invalid
  */
 router.get("/me", authenticate, getMe)
+
+/**
+ * @swagger
+ * /api/auth/me/details:
+ *   get:
+ *     summary: Get current user full details with shipments and stats
+ *     description: Returns the authenticated user's profile, all their shipments with full details, and aggregate statistics.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User details with shipments and stats
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user: { type: object }
+ *                     stats:
+ *                       type: object
+ *                       properties:
+ *                         totalShipments: { type: integer }
+ *                         deliveredCount: { type: integer }
+ *                         activeCount: { type: integer }
+ *                         cancelledCount: { type: integer }
+ *                         totalSpent: { type: number }
+ *                         totalValue: { type: number }
+ *                         statusBreakdown: { type: object }
+ *                     shipments: { type: array, items: { type: object } }
+ *       401:
+ *         description: Not authenticated
+ */
+router.get("/me/details", authenticate, getMyDetails)
 
 /**
  * @swagger

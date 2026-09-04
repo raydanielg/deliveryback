@@ -319,3 +319,79 @@ export async function resetPassword(req, res, next) {
     next(error)
   }
 }
+
+export async function getMyDetails(req, res, next) {
+  try {
+    const userId = req.user.id
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        avatar: true, isVerified: true, isActive: true, createdAt: true, updatedAt: true,
+      },
+    })
+
+    if (!user) return res.status(404).json({ success: false, message: "User not found" })
+
+    const [shipments, stats] = await Promise.all([
+      prisma.shipment.findMany({
+        where: { createdById: userId },
+        include: {
+          fromAddress: { select: { city: true, country: true, address: true } },
+          toAddress: { select: { city: true, country: true, address: true } },
+          driver: { include: { user: { select: { name: true, phone: true, avatar: true } } } },
+          vehicle: { select: { plateNumber: true, type: true } },
+          carrier: { select: { name: true } },
+          packages: true,
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+      Promise.all([
+        prisma.shipment.count({ where: { createdById: userId } }),
+        prisma.shipment.count({ where: { createdById: userId, status: "DELIVERED" } }),
+        prisma.shipment.count({
+          where: {
+            createdById: userId,
+            status: { in: ["PENDING", "ACCEPTED", "BOOKED", "AWAITING_PICKUP", "DRIVER_ASSIGNED", "PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY", "ONGOING", "OUT_FOR_PICKUP"] },
+          },
+        }),
+        prisma.shipment.count({ where: { createdById: userId, status: "CANCELLED" } }),
+        prisma.shipment.aggregate({
+          where: { createdById: userId, paymentStatus: "PAID" },
+          _sum: { totalAmount: true },
+        }),
+        prisma.shipment.aggregate({
+          where: { createdById: userId },
+          _sum: { totalAmount: true },
+        }),
+      ]),
+    ])
+
+    const [totalShipments, deliveredCount, activeCount, cancelledCount, totalSpent, totalValue] = stats
+
+    const statusBreakdown = {}
+    for (const s of shipments) {
+      statusBreakdown[s.status] = (statusBreakdown[s.status] || 0) + 1
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user,
+        stats: {
+          totalShipments,
+          deliveredCount,
+          activeCount,
+          cancelledCount,
+          totalSpent: totalSpent._sum.totalAmount || 0,
+          totalValue: totalValue._sum.totalAmount || 0,
+          statusBreakdown,
+        },
+        shipments,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
