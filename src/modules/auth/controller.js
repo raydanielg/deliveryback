@@ -6,6 +6,7 @@ import prisma from "../../prisma/client.js"
 import { registerSchema, loginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
 import { generateOtp } from "../../utils/otp.js"
 import { sendOtpEmail, sendWelcomeEmail } from "./email.service.js"
+import { sendOtpSms, sendSms } from "./sms.service.js"
 import { createNotification } from "../notifications/controller.js"
 
 function signToken(userId) {
@@ -58,6 +59,20 @@ export async function register(req, res, next) {
       await sendWelcomeEmail(user.email, user.name)
     } catch (emailErr) {
       console.warn("Welcome email failed:", emailErr.message)
+    }
+
+    if (user.phone) {
+      try {
+        const otp = generateOtp()
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000)
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { resetOtp: otp, resetOtpExp: otpExpiry },
+        })
+        await sendOtpSms(user.phone, otp, user.name)
+      } catch (smsErr) {
+        console.warn("Welcome SMS failed:", smsErr.message)
+      }
     }
 
     try {
@@ -223,6 +238,14 @@ export async function forgotPassword(req, res, next) {
         success: false,
         message: "Failed to send verification code. Please try again.",
       })
+    }
+
+    if (user.phone) {
+      try {
+        await sendOtpSms(user.phone, otp, user.name)
+      } catch (smsErr) {
+        console.warn("OTP SMS failed:", smsErr.message)
+      }
     }
 
     return res.status(200).json({

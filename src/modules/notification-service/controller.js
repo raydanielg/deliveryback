@@ -1,9 +1,11 @@
 import prisma from "../../prisma/client.js"
 import { createNotification } from "../notifications/controller.js"
 
-const SMS_PROVIDER = process.env.SMS_PROVIDER || "africas_talking"
-const SMS_API_KEY = process.env.SMS_API_KEY || ""
-const SMS_SENDER_ID = process.env.SMS_SENDER_ID || "XERIN"
+const SMS_PROVIDER = process.env.SMS_PROVIDER || "mshastra"
+const SMS_API_URL = process.env.SMS_API_URL || "http://mshastra.com/sendsms_api_json.aspx"
+const SMS_USERNAME = process.env.SMS_USERNAME || "XERINDELIV"
+const SMS_PASSWORD = process.env.SMS_PASSWORD || ""
+const SMS_SENDER_ID = process.env.SMS_SENDER_ID || "XERINDELIV"
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || "smtp"
 const EMAIL_API_KEY = process.env.EMAIL_API_KEY || ""
 
@@ -65,22 +67,22 @@ async function sendSMS(phone, message, userId) {
     let providerId = null
     let success = false
 
-    if (SMS_PROVIDER === "africas_talking" && SMS_API_KEY) {
-      const response = await fetch("https://api.africastalking.com/version1/messaging", {
+    const cleanPhone = phone.replace(/\s+/g, "").replace(/^\+/, "")
+
+    if (SMS_PROVIDER === "mshastra" && SMS_PASSWORD) {
+      const response = await fetch(SMS_API_URL, {
         method: "POST",
-        headers: {
-          "apiKey": SMS_API_KEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          username: process.env.SMS_USERNAME || "xerin",
-          to: phone,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user: SMS_USERNAME,
+          pwd: SMS_PASSWORD,
+          senderid: SMS_SENDER_ID,
+          mobilenumber: cleanPhone,
           message: message,
-          from: SMS_SENDER_ID,
         }),
       })
-      const data = await response.json()
-      providerId = data.SMSMessageData?.MessageId || null
+      const data = await response.text()
+      providerId = data
       success = response.ok
     } else {
       console.log(`[SMS Mock] To: ${phone}, Message: ${message}`)
