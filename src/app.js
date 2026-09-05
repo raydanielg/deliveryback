@@ -42,6 +42,8 @@ import sgrServiceRoutes from "./modules/sgr-service/routes.js"
 import airCargoRoutes from "./modules/air-cargo/routes.js"
 import warehouseRoutes from "./modules/warehouse/routes.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
+import { verifyEmailConnection } from "./modules/auth/email.service.js"
+import { sendSms } from "./modules/auth/sms.service.js"
 
 dotenv.config()
 
@@ -78,16 +80,41 @@ app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")))
 app.get("/health", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "Xerin Delivery API is running",
+    message: "Xerin Express API is running",
     timestamp: new Date().toISOString(),
     version: "2.0.0",
   })
 })
 
+app.get("/health/messaging", async (req, res) => {
+  const results = { email: {}, sms: {} }
+
+  const emailOk = await verifyEmailConnection()
+  results.email = {
+    connected: emailOk,
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    user: process.env.SMTP_USER,
+  }
+
+  if (process.env.SMS_PASSWORD) {
+    try {
+      const r = await sendSms("255700000000", "Xerin Express test message")
+      results.sms = { connected: true, response: r.providerId }
+    } catch (err) {
+      results.sms = { connected: false, error: err.message }
+    }
+  } else {
+    results.sms = { connected: false, error: "SMS_PASSWORD not set" }
+  }
+
+  res.status(200).json({ success: true, data: results })
+})
+
 // Swagger UI
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customCss: ".swagger-ui .topbar { display: none }",
-  customSiteTitle: "Xerin Delivery API Docs",
+  customSiteTitle: "Xerin Express API Docs",
   customfavIcon: "/assets/favicon.png",
   swaggerOptions: {
     docExpansion: "none",

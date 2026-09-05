@@ -58,7 +58,7 @@ export async function register(req, res, next) {
     try {
       await sendWelcomeEmail(user.email, user.name)
     } catch (emailErr) {
-      console.warn("Welcome email failed:", emailErr.message)
+      console.error("[REGISTER] Welcome email failed:", emailErr.message)
     }
 
     if (user.phone) {
@@ -71,7 +71,7 @@ export async function register(req, res, next) {
         })
         await sendOtpSms(user.phone, otp, user.name)
       } catch (smsErr) {
-        console.warn("Welcome SMS failed:", smsErr.message)
+        console.error("[REGISTER] Welcome SMS failed:", smsErr.message)
       }
     }
 
@@ -233,7 +233,7 @@ export async function forgotPassword(req, res, next) {
     try {
       await sendOtpEmail(user.email, otp, user.name)
     } catch (emailErr) {
-      console.error("OTP email failed:", emailErr.message)
+      console.error("[FORGOT_PASSWORD] OTP email failed:", emailErr.message)
       return res.status(500).json({
         success: false,
         message: "Failed to send verification code. Please try again.",
@@ -244,7 +244,7 @@ export async function forgotPassword(req, res, next) {
       try {
         await sendOtpSms(user.phone, otp, user.name)
       } catch (smsErr) {
-        console.warn("OTP SMS failed:", smsErr.message)
+        console.error("[FORGOT_PASSWORD] OTP SMS failed:", smsErr.message)
       }
     }
 

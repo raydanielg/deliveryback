@@ -5,9 +5,11 @@ export async function listOrders(req, res, next) {
     const page = parseInt(req.query.page) || 1
     const limit = parseInt(req.query.limit) || 20
     const status = req.query.status
+    const paymentStatus = req.query.paymentStatus
 
     const where = {}
     if (status) where.status = status
+    if (paymentStatus) where.paymentStatus = paymentStatus
     if (req.user.role === "CUSTOMER") {
       where.createdById = req.user.id
     }
@@ -17,7 +19,7 @@ export async function listOrders(req, res, next) {
         where,
         include: {
           createdBy: { select: { name: true, email: true } },
-          customer: { select: { name: true, phone: true } },
+          customer: { select: { phone: true, user: { select: { name: true } } } },
           shipments: { select: { id: true, trackingNumber: true, status: true } },
           payments: true,
         },

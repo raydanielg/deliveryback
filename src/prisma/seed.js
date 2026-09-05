@@ -2,7 +2,7 @@ import prisma from "./client.js"
 
 async function main() {
   const existing = await prisma.user.findUnique({
-    where: { email: "ezra@xerindelivery.com" },
+    where: { email: "ezra@xerinexpress.com" },
   })
 
   if (existing) {
@@ -16,7 +16,7 @@ async function main() {
   const admin = await prisma.user.create({
     data: {
       name: "Ezra Daniel",
-      email: "ezra@xerindelivery.com",
+      email: "ezra@xerinexpress.com",
       password: hashedPassword,
       role: "SUPER_ADMIN",
       phone: "+255700000000",
@@ -29,9 +29,9 @@ async function main() {
   // Create Xerin carrier
   const carrier = await prisma.carrier.create({
     data: {
-      name: "Xerin Delivery",
+      name: "Xerin Express",
       type: "XERIN",
-      email: "ops@xerindelivery.com",
+      email: "ops@xerinexpress.com",
       phone: "+255700000001",
       city: "Mwanza",
       country: "Tanzania",
@@ -323,8 +323,8 @@ async function main() {
   console.log("Mode-specific surcharges created")
 
   console.log("\n--- Seed Complete ---")
-  console.log("Admin: ezra@xerindelivery.com / Password123!")
-  console.log("Carrier: Xerin Delivery")
+  console.log("Admin: ezra@xerinexpress.com / Password123!")
+  console.log("Carrier: Xerin Express")
   console.log("Countries: Tanzania")
   console.log("Cities: Mwanza, Dar es Salaam")
   console.log("Route: Mwanza -> Dar es Salaam (1140 km)")

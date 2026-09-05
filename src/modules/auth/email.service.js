@@ -4,20 +4,34 @@ let transporter = null
 
 function getTransporter() {
   if (!transporter) {
+    const host = process.env.SMTP_HOST
+    const port = parseInt(process.env.SMTP_PORT || "465")
+    const user = process.env.SMTP_USER
+    const pass = process.env.SMTP_PASS
+
+    console.log(`[EMAIL] Creating transporter: ${host}:${port} (secure: ${port === 465}), user: ${user}`)
+
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || "465"),
-      secure: parseInt(process.env.SMTP_PORT || "465") === 465,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+      tls: { rejectUnauthorized: false },
     })
   }
   return transporter
+}
+
+export async function verifyEmailConnection() {
+  try {
+    const transport = getTransporter()
+    await transport.verify()
+    console.log("[EMAIL] SMTP connection verified successfully")
+    return true
+  } catch (err) {
+    console.error("[EMAIL] SMTP connection failed:", err.message)
+    return false
+  }
 }
 
 const EMAIL_WRAPPER = (content) => `
@@ -62,7 +76,10 @@ export async function sendOtpEmail(email, otp, name) {
     `),
   }
 
-  await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] Sending OTP email to: ${email}`)
+  const info = await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] OTP email sent successfully. MessageId: ${info.messageId}, Response: ${info.response}`)
+  return info
 }
 
 export async function sendWelcomeEmail(email, name) {
@@ -78,7 +95,7 @@ export async function sendWelcomeEmail(email, name) {
         Your account has been created successfully. You can now log in and start using Xerin Express to manage your shipments, track packages, and get instant quotes.
       </p>
       <div style="text-align: center; margin: 24px 0;">
-        <a href="${process.env.CLIENT_URL || 'https://deliveryoptionfrontend-web.vercel.app'}/auth" style="display: inline-block; background: #E8732A; color: #ffffff; font-size: 15px; font-weight: 700; padding: 14px 36px; border-radius: 10px; text-decoration: none;">Get Started</a>
+        <a href="${process.env.CLIENT_URL || 'https://swg.xerinexpress.com'}/auth" style="display: inline-block; background: #E8732A; color: #ffffff; font-size: 15px; font-weight: 700; padding: 14px 36px; border-radius: 10px; text-decoration: none;">Get Started</a>
       </div>
       <p style="color: #555; font-size: 14px; line-height: 1.6;">
         If you have any questions, feel free to reach out to our support team.
@@ -86,5 +103,8 @@ export async function sendWelcomeEmail(email, name) {
     `),
   }
 
-  await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] Sending welcome email to: ${email}`)
+  const info = await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] Welcome email sent successfully. MessageId: ${info.messageId}, Response: ${info.response}`)
+  return info
 }

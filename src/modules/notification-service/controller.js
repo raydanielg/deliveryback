@@ -4,10 +4,6 @@ import nodemailer from "nodemailer"
 import { sendSms } from "../auth/sms.service.js"
 
 const SMS_PROVIDER = process.env.SMS_PROVIDER || "mshastra"
-const SMS_API_URL = process.env.SMS_API_URL || "http://mshastra.com/sendsms_api_json.aspx"
-const SMS_USERNAME = process.env.SMS_USERNAME || "XERINDELIV"
-const SMS_PASSWORD = process.env.SMS_PASSWORD || ""
-const SMS_SENDER_ID = process.env.SMS_SENDER_ID || "XERINDELIV"
 
 let emailTransporter = null
 
@@ -168,44 +164,21 @@ export async function sendNotification(userId, status, shipmentData, customChann
 
 async function sendNotificationSMS(phone, message, userId) {
   try {
-    let providerId = null
-    let success = false
-
-    const cleanPhone = phone.replace(/\s+/g, "").replace(/^\+/, "")
     const smsMessage = `Xerin Express: ${message}`
-
-    if (SMS_PASSWORD) {
-      const response = await fetch(SMS_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user: SMS_USERNAME,
-          pwd: SMS_PASSWORD,
-          senderid: SMS_SENDER_ID,
-          mobilenumber: cleanPhone,
-          message: smsMessage,
-        }),
-      })
-      const data = await response.text()
-      providerId = data
-      success = response.ok
-    } else {
-      console.log(`[SMS Mock] To: ${cleanPhone}, Message: ${smsMessage}`)
-      success = true
-    }
+    const result = await sendSms(phone, smsMessage)
 
     await prisma.notificationLog.create({
       data: {
         recipient: phone,
         channel: "SMS",
         provider: SMS_PROVIDER,
-        providerId,
-        status: success ? "SENT" : "FAILED",
-        sentAt: success ? new Date() : null,
+        providerId: result.providerId,
+        status: "SENT",
+        sentAt: new Date(),
       },
     })
   } catch (err) {
-    console.error("SMS send error:", err.message)
+    console.error("[NOTIFICATION] SMS send error:", err.message)
     await prisma.notificationLog.create({
       data: {
         recipient: phone,
@@ -234,6 +207,7 @@ async function sendNotificationEmail(email, name, subject, body, userId) {
 
     if (process.env.SMTP_HOST) {
       const transport = getEmailTransporter()
+      console.log(`[NOTIFICATION] Sending email to: ${email}, subject: ${subject}`)
       const info = await transport.sendMail({
         from: process.env.SMTP_FROM || "Xerin Express <contact@neg.co.tz>",
         to: email,
@@ -242,6 +216,7 @@ async function sendNotificationEmail(email, name, subject, body, userId) {
       })
       providerId = info.messageId
       success = true
+      console.log(`[NOTIFICATION] Email sent. MessageId: ${info.messageId}`)
     } else {
       console.log(`[EMAIL Mock] To: ${email}, Subject: ${subject}`)
       success = true

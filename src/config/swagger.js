@@ -4,12 +4,12 @@ const options = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "Xerin Delivery API",
+      title: "Xerin Express API",
       version: "2.0.0",
       description: "Multipurpose Logistics Platform API - Parcel management, payment gateways, shipments, tracking, and more.",
       contact: {
-        name: "Xerin Delivery",
-        email: "support@xerindelivery.com",
+        name: "Xerin Express",
+        email: "support@xerinexpress.com",
       },
     },
     servers: [
