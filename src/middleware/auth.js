@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken"
 import prisma from "../prisma/client.js"
+import { hasPermission, hasAnyPermission, hasAllPermissions, getRolePermissions } from "./permissions.js"
 
 export async function authenticate(req, res, next) {
   try {
@@ -79,3 +80,72 @@ export function authorizeRoles(...roles) {
     next()
   }
 }
+
+// Permission-based authorization — single permission
+export function authorizePermission(permission) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated.",
+      })
+    }
+
+    if (!hasPermission(req.user.role, permission)) {
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required: ${permission}`,
+      })
+    }
+
+    next()
+  }
+}
+
+// Permission-based authorization — any of the given permissions
+export function authorizeAnyPermission(...permissions) {
+  const required = permissions.flat()
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated.",
+      })
+    }
+
+    if (!hasAnyPermission(req.user.role, required)) {
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required any of: ${required.join(", ")}`,
+      })
+    }
+
+    next()
+  }
+}
+
+// Permission-based authorization — all of the given permissions
+export function authorizeAllPermissions(...permissions) {
+  const required = permissions.flat()
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated.",
+      })
+    }
+
+    if (!hasAllPermissions(req.user.role, required)) {
+      return res.status(403).json({
+        success: false,
+        message: `Insufficient permissions. Required all of: ${required.join(", ")}`,
+      })
+    }
+
+    next()
+  }
+}
+
+// Export permission helpers for use in controllers
+export { hasPermission, hasAnyPermission, hasAllPermissions, getRolePermissions }
+

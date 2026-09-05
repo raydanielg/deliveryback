@@ -50,11 +50,13 @@ model User {
 enum UserRole {
   SUPER_ADMIN
   OPERATIONS_MANAGER
+  SGR_STATION_OFFICER
   DISPATCHER
   FINANCE
   CUSTOMER_SUPPORT
   WAREHOUSE_MANAGER
   CUSTOMS_OFFICER
+  PRICING_MANAGER
   REPORT_VIEWER
   CUSTOMER
   DRIVER
@@ -1534,6 +1536,15 @@ enum ExceptionType {
   UNCLAIMED
   RETURN_REQUEST
   CUSTOMER_REFUSAL
+  CUSTOMER_UNAVAILABLE
+  INCORRECT_ADDRESS
+  PROHIBITED_GOODS
+  PAYMENT_PENDING
+  CUSTOMS_HOLD
+  TRAIN_DELAY
+  FLIGHT_DELAY
+  DELIVERY_FAILED
+  PACKAGE_DISCREPANCY
 }
 
 enum ExceptionStatus {
@@ -1645,4 +1656,26 @@ model NotificationLog {
 
   @@index([recipient])
   @@map("notification_logs")
+}
+
+// ============================================================
+// TRAIN / CAPACITY MANAGEMENT (SGR - spec section 11)
+// ============================================================
+
+model TrainCapacity {
+  id              String   @id @default(cuid())
+  trainNumber     String   @unique
+  route           String
+  departureAt     DateTime
+  arrivalAt       DateTime?
+  totalCapacityKg Decimal  @db.Decimal(10, 2)
+  allocatedKg     Decimal  @default(0) @db.Decimal(10, 2)
+  usedKg          Decimal  @default(0) @db.Decimal(10, 2)
+  remainingKg     Decimal  @db.Decimal(10, 2)
+  status          String   @default("SCHEDULED")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("train_capacities")
 }

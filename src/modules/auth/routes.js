@@ -12,6 +12,7 @@ import {
   resetPassword,
 } from "./controller.js"
 import { authenticate } from "../../middleware/auth.js"
+import { getRolePermissions, PERMISSIONS, ROLE_LABELS, ALL_ROLES } from "../../middleware/permissions.js"
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -295,5 +296,60 @@ router.post("/verify-otp", otpLimiter, verifyOtp)
  *         description: Too many requests - rate limit exceeded
  */
 router.post("/reset-password", authLimiter, resetPassword)
+
+/**
+ * @swagger
+ * /api/auth/me/permissions:
+ *   get:
+ *     summary: Get current user's permissions
+ *     description: Returns the authenticated user's role and all granted permissions.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User permissions
+ */
+router.get("/me/permissions", authenticate, (req, res) => {
+  const role = req.user.role
+  res.json({
+    success: true,
+    data: {
+      role,
+      roleLabel: ROLE_LABELS[role] || role,
+      permissions: getRolePermissions(role),
+    },
+  })
+})
+
+/**
+ * @swagger
+ * /api/auth/permissions/all:
+ *   get:
+ *     summary: Get all roles and permissions (admin only)
+ *     description: Returns all available roles, their labels, and permission mappings.
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All roles and permissions
+ */
+router.get("/permissions/all", authenticate, (req, res) => {
+  const rolePerms = {}
+  for (const role of ALL_ROLES) {
+    rolePerms[role] = {
+      label: ROLE_LABELS[role],
+      permissions: getRolePermissions(role),
+    }
+  }
+  res.json({
+    success: true,
+    data: {
+      allPermissions: Object.values(PERMISSIONS),
+      roles: rolePerms,
+    },
+  })
+})
 
 export default router

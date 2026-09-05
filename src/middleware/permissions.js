@@ -1,0 +1,283 @@
+// ============================================================
+// XERIN EXPRESS — RBAC PERMISSION SYSTEM
+// Granular permissions mapped to roles
+// ============================================================
+
+// All permissions in the system
+export const PERMISSIONS = {
+  // Shipments
+  SHIPMENTS_VIEW: "shipments.view",
+  SHIPMENTS_CREATE: "shipments.create",
+  SHIPMENTS_EDIT: "shipments.edit",
+  SHIPMENTS_CANCEL: "shipments.cancel",
+  SHIPMENTS_DELETE: "shipments.delete",
+  SHIPMENTS_ASSIGN: "shipments.assign",
+
+  // Payments
+  PAYMENTS_VIEW: "payments.view",
+  PAYMENTS_VERIFY: "payments.verify",
+  PAYMENTS_REFUND: "payments.refund",
+  PAYMENTS_MANAGE: "payments.manage",
+
+  // Invoices & Receipts
+  INVOICES_VIEW: "invoices.view",
+  INVOICES_CREATE: "invoices.create",
+  RECEIPTS_VIEW: "receipts.view",
+  RECEIPTS_CREATE: "receipts.create",
+
+  // Drivers
+  DRIVERS_VIEW: "drivers.view",
+  DRIVERS_ASSIGN: "drivers.assign",
+  DRIVERS_MANAGE: "drivers.manage",
+
+  // Dispatch
+  DISPATCH_VIEW: "dispatch.view",
+  DISPATCH_CREATE: "dispatch.create",
+  DISPATCH_EDIT: "dispatch.edit",
+
+  // Warehouse
+  WAREHOUSE_VIEW: "warehouse.view",
+  WAREHOUSE_RECEIVE: "warehouse.receive",
+  WAREHOUSE_INSPECT: "warehouse.inspect",
+  WAREHOUSE_MOVE: "warehouse.move",
+  WAREHOUSE_DISPATCH: "warehouse.dispatch",
+  WAREHOUSE_MANAGE: "warehouse.manage",
+
+  // SGR
+  SGR_VIEW: "sgr.view",
+  SGR_RECEIVE: "sgr.receive",
+  SGR_SCREEN: "sgr.screen",
+  SGR_LOAD: "sgr.load",
+  SGR_ARRIVAL: "sgr.arrival",
+
+  // Air Cargo
+  AIR_VIEW: "air.view",
+  AIR_MANAGE: "air.manage",
+
+  // Customs
+  CUSTOMS_VIEW: "customs.view",
+  CUSTOMS_REVIEW: "customs.review",
+  CUSTOMS_HOLD: "customs.hold",
+  CUSTOMS_RELEASE: "customs.release",
+
+  // Pricing
+  PRICING_VIEW: "pricing.view",
+  PRICING_CREATE: "pricing.create",
+  PRICING_EDIT: "pricing.edit",
+  PRICING_DELETE: "pricing.delete",
+
+  // Reports
+  REPORTS_VIEW: "reports.view",
+  REPORTS_EXPORT: "reports.export",
+  REPORTS_FINANCIAL: "reports.financial",
+
+  // Users & Roles
+  USERS_VIEW: "users.view",
+  USERS_CREATE: "users.create",
+  USERS_EDIT: "users.edit",
+  USERS_DELETE: "users.delete",
+  USERS_CHANGE_ROLE: "users.change_role",
+  USERS_TOGGLE_ACTIVE: "users.toggle_active",
+
+  // System Settings
+  SETTINGS_VIEW: "settings.view",
+  SETTINGS_MANAGE: "settings.manage",
+  SETTINGS_SYSTEM: "settings.system",
+
+  // Audit
+  AUDIT_VIEW: "audit.view",
+
+  // Exceptions
+  EXCEPTIONS_VIEW: "exceptions.view",
+  EXCEPTIONS_CREATE: "exceptions.create",
+  EXCEPTIONS_APPROVE: "exceptions.approve",
+
+  // Notifications
+  NOTIFICATIONS_VIEW: "notifications.view",
+  NOTIFICATIONS_SEND: "notifications.send",
+  NOTIFICATIONS_MANAGE: "notifications.manage",
+
+  // Claims & Support
+  CLAIMS_VIEW: "claims.view",
+  CLAIMS_CREATE: "claims.create",
+  CLAIMS_ESCALATE: "claims.escalate",
+  CLAIMS_RESOLVE: "claims.resolve",
+  TICKETS_VIEW: "tickets.view",
+  TICKETS_CREATE: "tickets.create",
+  TICKETS_UPDATE: "tickets.update",
+
+  // Tracking
+  TRACKING_VIEW: "tracking.view",
+  TRACKING_MANAGE: "tracking.manage",
+
+  // Stations & Routes
+  STATIONS_VIEW: "stations.view",
+  STATIONS_MANAGE: "stations.manage",
+  ROUTES_VIEW: "routes.view",
+  ROUTES_MANAGE: "routes.manage",
+
+  // Integrations
+  INTEGRATIONS_VIEW: "integrations.view",
+  INTEGRATIONS_MANAGE: "integrations.manage",
+}
+
+// Role to permission mapping
+export const ROLE_PERMISSIONS = {
+  SUPER_ADMIN: Object.values(PERMISSIONS), // All permissions
+
+  OPERATIONS_MANAGER: [
+    PERMISSIONS.SHIPMENTS_VIEW, PERMISSIONS.SHIPMENTS_EDIT, PERMISSIONS.SHIPMENTS_CANCEL, PERMISSIONS.SHIPMENTS_ASSIGN,
+    PERMISSIONS.DISPATCH_VIEW, PERMISSIONS.DISPATCH_CREATE, PERMISSIONS.DISPATCH_EDIT,
+    PERMISSIONS.DRIVERS_VIEW, PERMISSIONS.DRIVERS_ASSIGN,
+    PERMISSIONS.WAREHOUSE_VIEW, PERMISSIONS.WAREHOUSE_RECEIVE, PERMISSIONS.WAREHOUSE_INSPECT, PERMISSIONS.WAREHOUSE_MOVE, PERMISSIONS.WAREHOUSE_DISPATCH,
+    PERMISSIONS.SGR_VIEW, PERMISSIONS.SGR_RECEIVE, PERMISSIONS.SGR_SCREEN, PERMISSIONS.SGR_LOAD, PERMISSIONS.SGR_ARRIVAL,
+    PERMISSIONS.AIR_VIEW,
+    PERMISSIONS.CUSTOMS_VIEW,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE, PERMISSIONS.EXCEPTIONS_APPROVE,
+    PERMISSIONS.TRACKING_VIEW, PERMISSIONS.TRACKING_MANAGE,
+    PERMISSIONS.REPORTS_VIEW, PERMISSIONS.REPORTS_EXPORT,
+    PERMISSIONS.NOTIFICATIONS_VIEW, PERMISSIONS.NOTIFICATIONS_SEND,
+    PERMISSIONS.CLAIMS_VIEW, PERMISSIONS.CLAIMS_ESCALATE,
+    PERMISSIONS.TICKETS_VIEW, PERMISSIONS.TICKETS_UPDATE,
+    PERMISSIONS.STATIONS_VIEW, PERMISSIONS.ROUTES_VIEW,
+    PERMISSIONS.USERS_VIEW,
+  ],
+
+  DISPATCHER: [
+    PERMISSIONS.SHIPMENTS_VIEW, PERMISSIONS.SHIPMENTS_ASSIGN,
+    PERMISSIONS.DISPATCH_VIEW, PERMISSIONS.DISPATCH_CREATE, PERMISSIONS.DISPATCH_EDIT,
+    PERMISSIONS.DRIVERS_VIEW, PERMISSIONS.DRIVERS_ASSIGN,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
+    PERMISSIONS.TRACKING_VIEW,
+    PERMISSIONS.NOTIFICATIONS_VIEW,
+  ],
+
+  FINANCE: [
+    PERMISSIONS.PAYMENTS_VIEW, PERMISSIONS.PAYMENTS_VERIFY, PERMISSIONS.PAYMENTS_REFUND, PERMISSIONS.PAYMENTS_MANAGE,
+    PERMISSIONS.INVOICES_VIEW, PERMISSIONS.INVOICES_CREATE,
+    PERMISSIONS.RECEIPTS_VIEW, PERMISSIONS.RECEIPTS_CREATE,
+    PERMISSIONS.REPORTS_VIEW, PERMISSIONS.REPORTS_EXPORT, PERMISSIONS.REPORTS_FINANCIAL,
+    PERMISSIONS.SHIPMENTS_VIEW,
+  ],
+
+  CUSTOMER_SUPPORT: [
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.TRACKING_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+    PERMISSIONS.CLAIMS_VIEW, PERMISSIONS.CLAIMS_CREATE, PERMISSIONS.CLAIMS_ESCALATE,
+    PERMISSIONS.TICKETS_VIEW, PERMISSIONS.TICKETS_CREATE, PERMISSIONS.TICKETS_UPDATE,
+    PERMISSIONS.NOTIFICATIONS_VIEW, PERMISSIONS.NOTIFICATIONS_SEND,
+    PERMISSIONS.EXCEPTIONS_VIEW,
+  ],
+
+  WAREHOUSE_MANAGER: [
+    PERMISSIONS.WAREHOUSE_VIEW, PERMISSIONS.WAREHOUSE_RECEIVE, PERMISSIONS.WAREHOUSE_INSPECT,
+    PERMISSIONS.WAREHOUSE_MOVE, PERMISSIONS.WAREHOUSE_DISPATCH, PERMISSIONS.WAREHOUSE_MANAGE,
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
+    PERMISSIONS.REPORTS_VIEW,
+  ],
+
+  CUSTOMS_OFFICER: [
+    PERMISSIONS.CUSTOMS_VIEW, PERMISSIONS.CUSTOMS_REVIEW, PERMISSIONS.CUSTOMS_HOLD, PERMISSIONS.CUSTOMS_RELEASE,
+    PERMISSIONS.AIR_VIEW,
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
+  ],
+
+  SGR_STATION_OFFICER: [
+    PERMISSIONS.SGR_VIEW, PERMISSIONS.SGR_RECEIVE, PERMISSIONS.SGR_SCREEN, PERMISSIONS.SGR_LOAD, PERMISSIONS.SGR_ARRIVAL,
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
+  ],
+
+  REPORT_VIEWER: [
+    PERMISSIONS.REPORTS_VIEW, PERMISSIONS.REPORTS_EXPORT,
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.TRACKING_VIEW,
+  ],
+
+  CUSTOMER: [
+    PERMISSIONS.SHIPMENTS_VIEW, PERMISSIONS.SHIPMENTS_CREATE,
+    PERMISSIONS.PAYMENTS_VIEW,
+    PERMISSIONS.TRACKING_VIEW,
+    PERMISSIONS.CLAIMS_VIEW, PERMISSIONS.CLAIMS_CREATE,
+    PERMISSIONS.TICKETS_VIEW, PERMISSIONS.TICKETS_CREATE,
+    PERMISSIONS.NOTIFICATIONS_VIEW,
+  ],
+
+  DRIVER: [
+    PERMISSIONS.SHIPMENTS_VIEW,
+    PERMISSIONS.TRACKING_VIEW,
+    PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
+    PERMISSIONS.NOTIFICATIONS_VIEW,
+  ],
+}
+
+// Get all permissions for a role
+export function getRolePermissions(role) {
+  return ROLE_PERMISSIONS[role] || []
+}
+
+// Check if a role has a specific permission
+export function hasPermission(role, permission) {
+  const perms = getRolePermissions(role)
+  return perms.includes(permission)
+}
+
+// Check if a role has any of the given permissions
+export function hasAnyPermission(role, permissions) {
+  const perms = getRolePermissions(role)
+  return permissions.some((p) => perms.includes(p))
+}
+
+// Check if a role has all of the given permissions
+export function hasAllPermissions(role, permissions) {
+  const perms = getRolePermissions(role)
+  return permissions.every((p) => perms.includes(p))
+}
+
+// Get all available roles
+export const ALL_ROLES = [
+  "SUPER_ADMIN",
+  "OPERATIONS_MANAGER",
+  "DISPATCHER",
+  "FINANCE",
+  "CUSTOMER_SUPPORT",
+  "WAREHOUSE_MANAGER",
+  "CUSTOMS_OFFICER",
+  "SGR_STATION_OFFICER",
+  "REPORT_VIEWER",
+  "CUSTOMER",
+  "DRIVER",
+]
+
+// Role labels for display
+export const ROLE_LABELS = {
+  SUPER_ADMIN: "Super Admin",
+  OPERATIONS_MANAGER: "Operations Manager",
+  DISPATCHER: "Dispatcher",
+  FINANCE: "Finance",
+  CUSTOMER_SUPPORT: "Customer Support",
+  WAREHOUSE_MANAGER: "Warehouse Manager",
+  CUSTOMS_OFFICER: "Customs Officer",
+  SGR_STATION_OFFICER: "SGR Station Officer",
+  REPORT_VIEWER: "Report Viewer",
+  CUSTOMER: "Customer",
+  DRIVER: "Driver",
+}
+
+// Role hierarchy for display
+export const ROLE_HIERARCHY = {
+  SUPER_ADMIN: 0,
+  OPERATIONS_MANAGER: 1,
+  FINANCE: 1,
+  REPORT_VIEWER: 1,
+  DISPATCHER: 2,
+  WAREHOUSE_MANAGER: 2,
+  CUSTOMS_OFFICER: 2,
+  SGR_STATION_OFFICER: 2,
+  CUSTOMER_SUPPORT: 3,
+  CUSTOMER: 4,
+  DRIVER: 4,
+}

@@ -41,6 +41,11 @@ import blogRoutes from "./modules/blog/routes.js"
 import sgrServiceRoutes from "./modules/sgr-service/routes.js"
 import airCargoRoutes from "./modules/air-cargo/routes.js"
 import warehouseRoutes from "./modules/warehouse/routes.js"
+import bookingRoutes from "./modules/booking/routes.js"
+import reportsRoutes from "./modules/reports/routes.js"
+import trainCapacityRoutes from "./modules/train-capacity/routes.js"
+import { listAuditLogs } from "./middleware/audit-logger.js"
+import { authenticate, authorizeRoles } from "./middleware/auth.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
 import { verifyEmailConnection } from "./modules/auth/email.service.js"
 import { sendSms } from "./modules/auth/sms.service.js"
@@ -156,6 +161,12 @@ app.use("/api/v1/blog", blogRoutes)
 app.use("/api/v1/sgr", sgrServiceRoutes)
 app.use("/api/v1/air-cargo", airCargoRoutes)
 app.use("/api/v1/warehouse", warehouseRoutes)
+app.use("/api/v1/booking", bookingRoutes)
+app.use("/api/v1/reports", reportsRoutes)
+app.use("/api/v1/train-capacity", trainCapacityRoutes)
+
+// Audit logs
+app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)
 
 app.use(notFound)
 app.use(errorHandler)
