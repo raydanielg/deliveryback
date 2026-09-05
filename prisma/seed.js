@@ -44,7 +44,11 @@ async function main() {
   })
   console.log("✅ Customer created:", customer.id)
 
-  // ── 3. Create Addresses ──
+  // ── 3. Clean up old seed addresses ──
+  await prisma.address.deleteMany({ where: { customerId: customer.id } })
+  console.log("✅ Cleaned old addresses")
+
+  // ── 4. Create Addresses ──
   const fromAddress = await prisma.address.create({
     data: {
       customerId: customer.id,
@@ -179,9 +183,15 @@ async function main() {
   ]
 
   for (const sd of shipmentsData) {
-    // Create Order
-    const order = await prisma.order.create({
-      data: {
+    // Create Order (upsert to handle re-runs)
+    const order = await prisma.order.upsert({
+      where: { orderNumber: sd.orderNumber },
+      update: {
+        totalAmount: sd.totalAmount,
+        paymentStatus: sd.paymentStatus,
+        status: sd.status === "DELIVERED" ? "COMPLETED" : sd.status === "CANCELLED" ? "CANCELLED" : "PROCESSING",
+      },
+      create: {
         orderNumber: sd.orderNumber,
         createdById: user.id,
         customerId: customer.id,
@@ -191,6 +201,16 @@ async function main() {
         status: sd.status === "DELIVERED" ? "COMPLETED" : sd.status === "CANCELLED" ? "CANCELLED" : "PROCESSING",
       },
     })
+
+    // Delete old shipment + children if exists, then recreate
+    const existingShipment = await prisma.shipment.findUnique({
+      where: { trackingNumber: sd.trackingNumber },
+    })
+    if (existingShipment) {
+      await prisma.shipmentStatusHistory.deleteMany({ where: { shipmentId: existingShipment.id } })
+      await prisma.package.deleteMany({ where: { shipmentId: existingShipment.id } })
+      await prisma.shipment.delete({ where: { id: existingShipment.id } })
+    }
 
     // Create Shipment
     const shipment = await prisma.shipment.create({
