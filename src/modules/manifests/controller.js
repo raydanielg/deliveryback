@@ -92,7 +92,6 @@ export async function getManifest(req, res, next) {
         vehicle: true,
         shipments: {
           include: {
-            order: { select: { senderName: true, senderPhone: true, receiverName: true, receiverPhone: true, description: true, quantity: true } },
             fromAddress: true,
             toAddress: true,
           },
@@ -156,7 +155,7 @@ export async function createSGRManifest(req, res, next) {
 
     const shipments = await prisma.shipment.findMany({
       where: { id: { in: data.shipmentIds } },
-      include: { order: { select: { senderName: true, senderPhone: true, receiverName: true, receiverPhone: true, description: true, quantity: true } } },
+      include: { fromAddress: { select: { fullName: true, phone: true, city: true } }, toAddress: { select: { fullName: true, phone: true, city: true } }, description: true },
     })
 
     if (shipments.length === 0) {
@@ -167,7 +166,7 @@ export async function createSGRManifest(req, res, next) {
     let totalPackages = 0
     for (const s of shipments) {
       totalWeight += Number(s.chargeableWeightKg)
-      totalPackages += Number(s.order?.quantity || 1)
+      totalPackages += 1
     }
 
     if (totalWeight > data.reservedBlockSpaceKg) {
@@ -207,7 +206,7 @@ export async function createSGRManifest(req, res, next) {
         },
       },
       include: {
-        shipments: { include: { order: { select: { senderName: true, senderPhone: true, receiverName: true, receiverPhone: true, description: true, quantity: true } } } },
+        shipments: { include: { fromAddress: true, toAddress: true } },
         handovers: true,
       },
     })
@@ -360,7 +359,8 @@ export async function getManifestByQR(req, res, next) {
         route: { include: { fromCity: true, toCity: true } },
         shipments: {
           include: {
-            order: { select: { senderName: true, senderPhone: true, receiverName: true, receiverPhone: true, description: true, quantity: true } },
+            fromAddress: true,
+            toAddress: true,
           },
         },
         handovers: { include: { completedBy: { select: { name: true } } }, orderBy: { completedAt: "asc" } },

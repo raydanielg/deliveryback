@@ -1,12 +1,22 @@
 import prisma from "../../prisma/client.js"
 import { createStationSchema, receiveShipmentSchema, dispatchInventorySchema } from "./validation.js"
 
+const VALID_STATION_TYPES = ["SGR_STATION", "WAREHOUSE", "HUB", "DROP_POINT", "AIRPORT_CARGO"]
+
 export async function listStations(req, res, next) {
   try {
-    const { type, activeOnly, search } = req.query
+    const { type, activeOnly, isActive, search } = req.query
     const where = {}
-    if (activeOnly === "true") where.isActive = true
-    if (type) where.type = type
+    if (activeOnly === "true" || isActive === "true") where.isActive = true
+    if (isActive === "false") where.isActive = false
+    if (type) {
+      const validType = VALID_STATION_TYPES.find(t => t === type || t === type.toUpperCase())
+      if (validType) {
+        where.type = validType
+      } else {
+        return res.status(400).json({ success: false, message: `Invalid station type. Valid types: ${VALID_STATION_TYPES.join(", ")}` })
+      }
+    }
     if (search) where.name = { contains: search, mode: "insensitive" }
 
     const stations = await prisma.station.findMany({
@@ -33,7 +43,7 @@ export async function getStation(req, res, next) {
       where: { id },
       include: {
         inventory: {
-          include: { shipment: { select: { trackingNumber: true, status: true, chargeableWeightKg: true, order: { select: { senderName: true, receiverName: true } } } } },
+          include: { shipment: { select: { trackingNumber: true, status: true, chargeableWeightKg: true, fromAddress: { select: { fullName: true, phone: true, city: true } }, toAddress: { select: { fullName: true, phone: true, city: true } } } } },
           orderBy: { receivedAt: "desc" },
           take: 50,
         },
@@ -99,7 +109,8 @@ export async function getStationInventory(req, res, next) {
         shipment: {
           select: {
             id: true, trackingNumber: true, status: true, chargeableWeightKg: true,
-            order: { select: { senderName: true, receiverName: true, receiverPhone: true } },
+            fromAddress: { select: { fullName: true, phone: true, city: true } },
+            toAddress: { select: { fullName: true, phone: true, city: true } },
           },
         },
       },

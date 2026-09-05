@@ -16,7 +16,8 @@ export async function listExceptions(req, res, next) {
         shipment: {
           select: {
             id: true, trackingNumber: true, status: true, chargeableWeightKg: true,
-            order: { select: { senderName: true, receiverName: true, receiverPhone: true } },
+            fromAddress: { select: { fullName: true, phone: true, city: true } },
+            toAddress: { select: { fullName: true, phone: true, city: true } },
           },
         },
         station: { select: { id: true, name: true, code: true } },
@@ -39,8 +40,9 @@ export async function getException(req, res, next) {
       include: {
         shipment: {
           select: {
-            id: true, trackingNumber: true, status: true, chargeableWeightKg: true,
-            order: { select: { senderName: true, receiverName: true, receiverPhone: true, description: true } },
+            id: true, trackingNumber: true, status: true, chargeableWeightKg: true, description: true,
+            fromAddress: { select: { fullName: true, phone: true, city: true } },
+            toAddress: { select: { fullName: true, phone: true, city: true } },
           },
         },
         station: { select: { id: true, name: true, code: true } },

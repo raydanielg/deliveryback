@@ -166,7 +166,7 @@ export async function calculateQuote(params) {
 
   return {
     requiresCustomQuote: false,
-    currency,
+    currency: "TZS",
     distanceKm,
     actualWeightKg,
     volumetricWeightKg: volumetricWeight,

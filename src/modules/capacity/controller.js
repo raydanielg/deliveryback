@@ -72,7 +72,7 @@ export async function getManifestCapacity(req, res, next) {
         shipments: {
           select: {
             id: true, trackingNumber: true, chargeableWeightKg: true,
-            status: true, order: { select: { senderName: true, receiverName: true } },
+            status: true, fromAddress: { select: { fullName: true, city: true } }, toAddress: { select: { fullName: true, city: true } },
           },
         },
         station: { select: { id: true, name: true, code: true, capacityKg: true } },
