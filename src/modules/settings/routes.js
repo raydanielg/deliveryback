@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { getMapSettings, updateMapSettings, getPublicMapSettings } from "./controller.js"
+import { getMapSettings, updateMapSettings, getPublicMapSettings, getBusinessSettings, updateBusinessSettings } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
 const router = Router()
@@ -83,5 +83,45 @@ router.get("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANA
  *         description: Insufficient permissions
  */
 router.put("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]), updateMapSettings)
+
+/**
+ * @swagger
+ * /api/v1/settings/business:
+ *   get:
+ *     summary: Get business and system settings (admin)
+ *     description: Returns all business, system, security, delivery, and notification configuration. Admin only.
+ *     tags: [Settings]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Business settings
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.get("/business", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER"]), getBusinessSettings)
+
+/**
+ * @swagger
+ * /api/v1/settings/business:
+ *   put:
+ *     summary: Update business and system settings (admin)
+ *     description: Updates business info, rate limits, security, delivery operations, notifications, and system management settings. Admin only.
+ *     tags: [Settings]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Business settings updated
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.put("/business", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER"]), updateBusinessSettings)
 
 export default router

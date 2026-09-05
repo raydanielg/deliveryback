@@ -98,6 +98,105 @@ export async function updateMapSettings(req, res, next) {
   }
 }
 
+// Business / System settings state with production defaults
+let businessSettingsState = {
+  // Business Info
+  platformName: "Xerin Express",
+  supportEmail: "support@xerinexpress.com",
+  supportPhone: "+255 700 000 000",
+  defaultCurrency: "TZS",
+  timezone: "Africa/Dar_es_Salaam",
+  language: "en",
+  businessAddress: "Dar es Salaam, Tanzania",
+  websiteUrl: "https://xerinexpress.com",
+  logoUrl: "",
+
+  // Rate Limits & Security
+  apiRateLimitPerMinute: 100,
+  authLoginMaxAttempts: 5,
+  authLockoutDurationMinutes: 15,
+  otpMaxRequestsPerHour: 5,
+  otpExpiryMinutes: 10,
+  passwordMinLength: 8,
+  passwordRequireUppercase: true,
+  passwordRequireSpecialChar: true,
+  passwordRequireNumber: true,
+  jwtExpiryHours: 24,
+  refreshTokenExpiryDays: 7,
+  enableTwoFactorAuth: false,
+  enforceHttps: true,
+
+  // Delivery & Operations
+  enableQrCodeProofOfDelivery: true,
+  enablePhotoProofOfDelivery: true,
+  enableSignatureProofOfDelivery: false,
+  enableOtpVerification: true,
+  enableScheduledDeliveries: true,
+  enableParcelDeliveryProof: true,
+  autoAssignDrivers: false,
+  driverAcceptanceTimeoutMinutes: 3,
+  cancellationAllowed: true,
+  maxCancellationTimeMinutes: 30,
+  enableSurgePricing: true,
+  enableTips: true,
+  defaultPayer: "SENDER",
+
+  // Notifications
+  enableEmailNotifications: true,
+  enableSmsNotifications: true,
+  enablePushNotifications: false,
+  enableWebhookNotifications: false,
+  smsProvider: "africastalking",
+  emailProvider: "smtp",
+  notificationRetryAttempts: 3,
+  notificationRetryDelayMinutes: 5,
+
+  // System Management
+  enableMaintenanceMode: false,
+  maintenanceMessage: "We are currently performing maintenance. Please check back soon.",
+  enableNewRegistrations: true,
+  enableCustomerSelfBooking: true,
+  enableDriverOnboarding: true,
+  maxFileUploadSizeMb: 10,
+  enableAuditLog: true,
+  dataRetentionDays: 90,
+  enableBackupNotifications: true,
+  sessionTimeoutMinutes: 30,
+}
+
+export async function getBusinessSettings(req, res, next) {
+  try {
+    res.json({ success: true, data: businessSettingsState })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function updateBusinessSettings(req, res, next) {
+  try {
+    const updates = req.body
+    for (const [key, value] of Object.entries(updates)) {
+      if (key in businessSettingsState) {
+        const current = businessSettingsState[key]
+        if (typeof current === "boolean") {
+          businessSettingsState[key] = Boolean(value)
+        } else if (typeof current === "number") {
+          businessSettingsState[key] = Number(value)
+        } else {
+          businessSettingsState[key] = value
+        }
+      }
+    }
+    res.json({
+      success: true,
+      message: "Business settings updated successfully",
+      data: businessSettingsState,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export async function getPublicMapSettings(req, res, next) {
   try {
     // Return client-safe tile URL and active style for mobile apps and web
