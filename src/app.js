@@ -44,6 +44,7 @@ import warehouseRoutes from "./modules/warehouse/routes.js"
 import bookingRoutes from "./modules/booking/routes.js"
 import reportsRoutes from "./modules/reports/routes.js"
 import trainCapacityRoutes from "./modules/train-capacity/routes.js"
+import marketplaceIntegrationsRoutes from "./modules/marketplace-integrations/routes.js"
 import { listAuditLogs } from "./middleware/audit-logger.js"
 import { authenticate, authorizeRoles } from "./middleware/auth.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
@@ -164,6 +165,7 @@ app.use("/api/v1/warehouse", warehouseRoutes)
 app.use("/api/v1/booking", bookingRoutes)
 app.use("/api/v1/reports", reportsRoutes)
 app.use("/api/v1/train-capacity", trainCapacityRoutes)
+app.use("/api/v1/marketplace-integrations", marketplaceIntegrationsRoutes)
 
 // Audit logs
 app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)
