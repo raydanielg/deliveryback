@@ -82,6 +82,35 @@ export async function sendOtpEmail(email, otp, name) {
   return info
 }
 
+export async function sendVerificationOtpEmail(email, otp, name) {
+  const transport = getTransporter()
+
+  const mailOptions = {
+    from: process.env.SMTP_FROM || "Xerin Express <contact@neg.co.tz>",
+    to: email,
+    subject: "Verify Your Account - Xerin Express",
+    html: EMAIL_WRAPPER(`
+      <h2 style="color: #1a1a1a; font-size: 20px; margin: 0 0 16px 0;">Welcome, ${name}!</h2>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;">
+        Your Xerin Express account has been created. Use the verification code below to verify your account:
+      </p>
+      <div style="text-align: center; margin: 28px 0;">
+        <div style="display: inline-block; background: #fff5ed; border: 2px solid #E8732A; border-radius: 12px; padding: 20px 40px;">
+          <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #E8732A;">${otp}</span>
+        </div>
+      </div>
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">
+        This code will expire in <strong>10 minutes</strong>. Enter it on the verification page to activate your account.
+      </p>
+    `),
+  }
+
+  console.log(`[EMAIL] Sending verification OTP email to: ${email}`)
+  const info = await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] Verification OTP email sent. MessageId: ${info.messageId}`)
+  return info
+}
+
 export async function sendWelcomeEmail(email, name) {
   const transport = getTransporter()
 

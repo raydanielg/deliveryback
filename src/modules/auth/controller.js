@@ -5,8 +5,9 @@ import fs from "fs/promises"
 import prisma from "../../prisma/client.js"
 import { registerSchema, loginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
 import { generateOtp } from "../../utils/otp.js"
-import { sendOtpEmail, sendWelcomeEmail } from "./email.service.js"
+import { sendOtpEmail, sendVerificationOtpEmail, sendWelcomeEmail } from "./email.service.js"
 import { sendOtpSms, sendSms } from "./sms.service.js"
+import { sendOTP as sendWhatsAppOTP } from "../whatsapp/otp-engine.js"
 import { createNotification } from "../notifications/controller.js"
 
 function signToken(userId) {
@@ -61,19 +62,45 @@ export async function register(req, res, next) {
       console.error("[REGISTER] Welcome email failed:", emailErr.message)
     }
 
+    // Generate OTP for account verification
+    const otp = generateOtp()
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { resetOtp: otp, resetOtpExp: otpExpiry },
+    })
+
+    const otpChannels = []
+
+    // 1. Send OTP via Email
+    try {
+      await sendVerificationOtpEmail(user.email, otp, user.name)
+      otpChannels.push("email")
+    } catch (emailErr) {
+      console.error("[REGISTER] OTP email failed:", emailErr.message)
+    }
+
+    // 2. Send OTP via SMS
     if (user.phone) {
       try {
-        const otp = generateOtp()
-        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000)
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { resetOtp: otp, resetOtpExp: otpExpiry },
-        })
         await sendOtpSms(user.phone, otp, user.name)
+        otpChannels.push("SMS")
       } catch (smsErr) {
-        console.error("[REGISTER] Welcome SMS failed:", smsErr.message)
+        console.error("[REGISTER] OTP SMS failed:", smsErr.message)
       }
     }
+
+    // 3. Send OTP via WhatsApp
+    if (user.phone) {
+      try {
+        await sendWhatsAppOTP(user.phone, "REGISTRATION")
+        otpChannels.push("WhatsApp")
+      } catch (waErr) {
+        console.error("[REGISTER] OTP WhatsApp failed:", waErr.message)
+      }
+    }
+
+    console.log(`[REGISTER] OTP sent via: ${otpChannels.join(", ") || "none"}`)
 
     try {
       await createNotification(
@@ -91,10 +118,11 @@ export async function register(req, res, next) {
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully.",
+      message: "Account created successfully. Verification code sent to your email, phone (SMS), and WhatsApp.",
       data: {
         user: userResponse(user),
         token,
+        needsVerification: true,
       },
     })
   } catch (error) {

@@ -197,7 +197,12 @@ export async function acceptOrder(req, res, next) {
       }
 
       // Check if offer has expired
-      if (new Date(offerRow.offer_expires_at) < new Date()) {
+      // Prisma columns are camelCase by default (no @map on this model) — reading
+      // snake_case keys off a $queryRaw result silently returns undefined, which broke
+      // every check below: expiry was never actually enforced (Invalid Date comparisons
+      // are always false), and the ownership check always threw "This offer does not
+      // belong to you" for every driver, on every order, unconditionally.
+      if (new Date(offerRow.offerExpiresAt) < new Date()) {
         await tx.orderOffer.update({
           where: { id: offerId },
           data: { status: "EXPIRED", expiredAt: new Date() },
@@ -206,13 +211,13 @@ export async function acceptOrder(req, res, next) {
       }
 
       // Verify this offer belongs to this driver
-      if (offerRow.driver_id !== driverId) {
+      if (offerRow.driverId !== driverId) {
         throw new Error("This offer does not belong to you")
       }
 
       // Lock the shipment row to prevent concurrent acceptance
       const shipmentLock = await tx.$queryRaw`
-        SELECT * FROM shipments WHERE id = ${offerRow.shipment_id} FOR UPDATE
+        SELECT * FROM shipments WHERE id = ${offerRow.shipmentId} FOR UPDATE
       `
       const shipment = Array.isArray(shipmentLock) ? shipmentLock[0] : shipmentLock
 
@@ -221,7 +226,7 @@ export async function acceptOrder(req, res, next) {
       }
 
       // Check if shipment already has a driver assigned
-      if (shipment.driver_id) {
+      if (shipment.driverId) {
         // Mark this offer as superseded
         await tx.orderOffer.update({
           where: { id: offerId },
@@ -231,7 +236,7 @@ export async function acceptOrder(req, res, next) {
       }
 
       // Re-check eligibility inside the transaction
-      const eligibility = await checkDriverEligibility(driverId, offerRow.shipment_id)
+      const eligibility = await checkDriverEligibility(driverId, offerRow.shipmentId)
       if (!eligibility.eligible) {
         await tx.orderOffer.update({
           where: { id: offerId },
@@ -252,10 +257,13 @@ export async function acceptOrder(req, res, next) {
       // Assign the driver to the shipment
       const assignment = await tx.assignment.create({
         data: {
-          shipmentId: offerRow.shipment_id,
+          shipmentId: offerRow.shipmentId,
           driverId,
           vehicleId: eligibility.vehicle?.id || null,
-          assignedById: driverId, // self-assigned via marketplace
+          // Assignment.assignedById is a FK to User.id, not Driver.id — `driverId` here is
+          // req.driver.id (the Driver record's own id), so this violated the FK constraint
+          // on every marketplace acceptance. req.user.id is the actual User.id.
+          assignedById: req.user.id, // self-assigned via marketplace
           status: "ACCEPTED",
           acceptedAt: new Date(),
         },
@@ -263,7 +271,7 @@ export async function acceptOrder(req, res, next) {
 
       // Update shipment
       await tx.shipment.update({
-        where: { id: offerRow.shipment_id },
+        where: { id: offerRow.shipmentId },
         data: {
           driverId,
           vehicleId: eligibility.vehicle?.id || null,
@@ -281,7 +289,7 @@ export async function acceptOrder(req, res, next) {
       // Cancel all other pending offers for this shipment
       await tx.orderOffer.updateMany({
         where: {
-          shipmentId: offerRow.shipment_id,
+          shipmentId: offerRow.shipmentId,
           status: "PENDING",
           id: { not: offerId },
         },
@@ -291,7 +299,7 @@ export async function acceptOrder(req, res, next) {
       // Create tracking event
       await tx.trackingEvent.create({
         data: {
-          shipmentId: offerRow.shipment_id,
+          shipmentId: offerRow.shipmentId,
           event: "DRIVER_ACCEPTED",
           status: "DRIVER_ASSIGNED",
           description: "Driver accepted order from marketplace",
@@ -299,7 +307,7 @@ export async function acceptOrder(req, res, next) {
         },
       })
 
-      return { assignment, shipmentId: offerRow.shipment_id, trackingNumber: shipment.tracking_number }
+      return { assignment, shipmentId: offerRow.shipmentId, trackingNumber: shipment.trackingNumber, vehicleId: eligibility.vehicle?.id || null }
     }, {
       timeout: 10000, // 10 second timeout for the transaction
       isolationLevel: "Serializable",
@@ -340,7 +348,11 @@ export async function acceptOrder(req, res, next) {
       await createTripForAssignment({
         shipmentId: result.shipmentId,
         driverId,
-        vehicleId: eligibility.vehicle?.id || null,
+        // `eligibility` was computed inside the $transaction closure above and is out of
+        // scope here — referencing it directly threw a ReferenceError on every marketplace
+        // acceptance, silently swallowed by the catch below, so no Trip was ever created
+        // even though the API reported success. Carried through via `result` instead.
+        vehicleId: result.vehicleId,
         assignmentId: result.assignment.id,
         transportRequestId: tr.id,
         dispatchMode: "OPEN_ORDER",
