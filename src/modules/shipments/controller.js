@@ -291,8 +291,32 @@ export async function updateShipmentStatus(req, res, next) {
     const { id } = req.params
     const data = updateShipmentStatusSchema.parse(req.body)
 
+    // Belt-and-braces alongside the schema exclusion above — DELIVERED must only ever be
+    // reached via verifyDeliveryOtp's real OTP match, never as a plain status write, even
+    // by staff. Without this a shipment could be marked delivered with zero proof.
+    if (data.status === "DELIVERED") {
+      return res.status(400).json({
+        success: false,
+        message: "DELIVERED can only be set via OTP-verified delivery confirmation (POST /:id/verify-delivery-otp), not a manual status update.",
+      })
+    }
+
     const shipment = await prisma.shipment.findUnique({ where: { id } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+
+    // A driver may only move their OWN assigned shipment, and only through the
+    // transit-related statuses the OTP endpoints don't already cover — never payment,
+    // customs, or warehouse statuses, which are staff-only decisions.
+    if (req.user.role === "DRIVER") {
+      const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+      if (!driver || shipment.driverId !== driver.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+      const DRIVER_ALLOWED_STATUSES = ["IN_TRANSIT", "ONGOING", "OUT_FOR_DELIVERY", "DELIVERY_FAILED", "FAILED", "RETURNING"]
+      if (!DRIVER_ALLOWED_STATUSES.includes(data.status)) {
+        return res.status(403).json({ success: false, message: "Drivers cannot set this status" })
+      }
+    }
 
     const updated = await prisma.shipment.update({
       where: { id },
@@ -522,13 +546,17 @@ export async function cancelShipment(req, res, next) {
 
 export async function getShipmentStats(req, res, next) {
   try {
+    // Previously unscoped — any authenticated CUSTOMER could call this and see
+    // platform-wide shipment counts across every customer, not just their own.
+    const base = req.user.role === "CUSTOMER" ? { createdById: req.user.id } : {}
+
     const [total, active, delivered, cancelled, inTransit, scheduled] = await Promise.all([
-      prisma.shipment.count(),
-      prisma.shipment.count({ where: { status: { in: ["PENDING", "BOOKED", "AWAITING_PICKUP", "DRIVER_ASSIGNED", "ACCEPTED", "OUT_FOR_PICKUP", "PICKED_UP", "IN_TRANSIT", "ONGOING", "OUT_FOR_DELIVERY"] } } }),
-      prisma.shipment.count({ where: { status: "DELIVERED" } }),
-      prisma.shipment.count({ where: { status: "CANCELLED" } }),
-      prisma.shipment.count({ where: { status: { in: ["IN_TRANSIT", "ONGOING"] } } }),
-      prisma.shipment.count({ where: { isScheduled: true, status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
+      prisma.shipment.count({ where: base }),
+      prisma.shipment.count({ where: { ...base, status: { in: ["PENDING", "BOOKED", "AWAITING_PICKUP", "DRIVER_ASSIGNED", "ACCEPTED", "OUT_FOR_PICKUP", "PICKED_UP", "IN_TRANSIT", "ONGOING", "OUT_FOR_DELIVERY"] } } }),
+      prisma.shipment.count({ where: { ...base, status: "DELIVERED" } }),
+      prisma.shipment.count({ where: { ...base, status: "CANCELLED" } }),
+      prisma.shipment.count({ where: { ...base, status: { in: ["IN_TRANSIT", "ONGOING"] } } }),
+      prisma.shipment.count({ where: { ...base, isScheduled: true, status: { notIn: ["DELIVERED", "CANCELLED"] } } }),
     ])
 
     res.json({

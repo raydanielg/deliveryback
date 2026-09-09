@@ -65,12 +65,15 @@ export const createShipmentSchema = z.object({
 })
 
 export const updateShipmentStatusSchema = z.object({
+  // DELIVERED is deliberately excluded — that transition must only ever happen through
+  // verifyDeliveryOtp (real OTP match) or a proof-of-delivery upload, never as a plain
+  // manual status write. See the explicit rejection in updateShipmentStatus too.
   status: z.enum([
     "PENDING", "QUOTE_CREATED", "BOOKED", "PAYMENT_PENDING", "PAYMENT_CONFIRMED",
     "AWAITING_PICKUP", "DRIVER_ASSIGNED", "ACCEPTED", "OUT_FOR_PICKUP",
     "PICKED_UP", "IN_TRANSIT", "ONGOING", "ARRIVED_DESTINATION",
     "ARRIVED_COUNTRY", "CUSTOMS_REVIEW", "CUSTOMS_CLEARED", "WAREHOUSE",
-    "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURNING",
+    "OUT_FOR_DELIVERY", "DELIVERY_FAILED", "RETURNING",
     "RETURNED", "FAILED", "CANCELLED", "ON_HOLD",
   ]),
   notes: z.string().optional(),

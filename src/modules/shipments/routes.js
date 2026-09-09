@@ -381,14 +381,17 @@ router.get("/:id", getShipment)
  *       200:
  *         description: Status updated
  */
-// Staff-only manual override — this accepts ANY status in the enum, including
-// PAYMENT_CONFIRMED, with no ownership check. It previously had no role gate at all,
-// letting any authenticated CUSTOMER call it on any shipment (not just their own) and
-// have "Payment Confirmed" render on that shipment's public tracking page. Drivers use
-// the dedicated OTP-verified pickup/delivery endpoints above instead of this one.
+// Staff- and driver-only — this previously had no role gate at all, letting any
+// authenticated CUSTOMER call it on any shipment (not just their own) and have "Payment
+// Confirmed" render on that shipment's public tracking page. DRIVER is included because
+// the driver app genuinely needs it for transitions the OTP endpoints don't cover
+// (PICKED_UP -> IN_TRANSIT after pickup, marking a failed delivery attempt) — the
+// controller separately (a) blocks DELIVERED for every role, since that must only come
+// from a real OTP match, and (b) restricts which statuses a DRIVER specifically may set
+// and requires the shipment be assigned to them.
 router.put(
   "/:id/status",
-  authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER"),
+  authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "DRIVER"),
   updateShipmentStatus
 )
 

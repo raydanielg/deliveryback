@@ -18,7 +18,7 @@ const RETRY_DELAYS = [60000, 300000, 900000] // 1min, 5min, 15min
 // QUEUE MESSAGE (create + queue, non-blocking)
 // ---------------------------------------------------------
 
-export async function queueMessage({ connectionId, recipient, templateName, variables, eventType, shipmentId, metadata, recipientName }) {
+export async function queueMessage({ connectionId, recipient, templateName, variables, eventType, shipmentId, metadata, recipientName, messageBody: directBody }) {
   // Validate connection exists and is active
   const conn = await prisma.whatsAppConnection.findUnique({ where: { id: connectionId } })
   if (!conn || !conn.isActive) {
@@ -29,7 +29,9 @@ export async function queueMessage({ connectionId, recipient, templateName, vari
   let template = null
   let messageBody = ""
 
-  if (templateName) {
+  if (directBody) {
+    messageBody = directBody
+  } else if (templateName) {
     template = await prisma.whatsAppTemplate.findUnique({ where: { name: templateName } })
     if (!template) throw new Error(`Template "${templateName}" not found`)
     messageBody = renderTemplate(template.body, variables || {})
@@ -42,7 +44,7 @@ export async function queueMessage({ connectionId, recipient, templateName, vari
       return null
     }
   } else {
-    throw new Error("Either templateName or eventType is required")
+    throw new Error("Either messageBody, templateName, or eventType is required")
   }
 
   // Create message record
@@ -300,8 +302,7 @@ export async function sendTestMessage(connectionId, recipient, message) {
   return queueMessage({
     connectionId,
     recipient,
-    templateName: null,
-    eventType: null,
+    messageBody: message || "XERIN Express test message — this is a test from the WhatsApp Engine.",
     variables: {},
     metadata: { test: true },
     recipientName: "Test",
