@@ -120,7 +120,10 @@ export async function _processQueue(connectionId) {
     where: {
       connectionId,
       status: { in: ["QUEUED", "RETRYING"] },
-      nextRetryAt: { lte: new Date() },
+      OR: [
+        { nextRetryAt: null },
+        { nextRetryAt: { lte: new Date() } },
+      ],
     },
     orderBy: { queuedAt: "asc" },
     take: 20,
