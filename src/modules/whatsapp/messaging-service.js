@@ -1,5 +1,5 @@
 import prisma from "../../prisma/client.js"
-import { getProvider } from "./connection-manager.js"
+import { getProvider, restoreConnection } from "./connection-manager.js"
 import { renderTemplate, getTemplateByEvent } from "./template-engine.js"
 import { sendSms } from "../auth/sms.service.js"
 import { emitEvent, EVENTS } from "../integrations/event-bus.js"
@@ -79,12 +79,42 @@ export async function queueMessage({ connectionId, recipient, templateName, vari
 }
 
 // ---------------------------------------------------------
+// ENSURE PROVIDER (restore if missing)
+// ---------------------------------------------------------
+
+async function _ensureProvider(connectionId) {
+  let provider = await getProvider(connectionId)
+  if (provider && provider.isConnected) return provider
+
+  // Provider not in memory or not connected — try to restore from DB session
+  const conn = await prisma.whatsAppConnection.findUnique({ where: { id: connectionId } })
+  if (conn && conn.sessionData && conn.isActive) {
+    console.log(`[WhatsApp] Provider not in memory, attempting restore for ${connectionId}...`)
+    try {
+      await restoreConnection(connectionId)
+      provider = await getProvider(connectionId)
+    } catch (err) {
+      console.error(`[WhatsApp] Restore failed for ${connectionId}:`, err.message)
+    }
+  }
+  return provider
+}
+
+// ---------------------------------------------------------
 // PROCESS QUEUE (send pending messages for a connection)
 // ---------------------------------------------------------
 
 export async function _processQueue(connectionId) {
-  const provider = await getProvider(connectionId)
-  if (!provider || !provider.isConnected) return
+  let provider = await getProvider(connectionId)
+  if (!provider) {
+    // Try to restore provider from DB session
+    provider = await _ensureProvider(connectionId)
+  }
+  if (!provider || !provider.isConnected) {
+    const conn = await prisma.whatsAppConnection.findUnique({ where: { id: connectionId }, select: { status: true, name: true } })
+    console.log(`[WhatsApp] Queue skip for ${conn?.name || connectionId}: provider ${!provider ? "not in memory" : "not connected"} (DB status: ${conn?.status})`)
+    return
+  }
 
   const pending = await prisma.whatsAppMessage.findMany({
     where: {
@@ -95,6 +125,10 @@ export async function _processQueue(connectionId) {
     orderBy: { queuedAt: "asc" },
     take: 20,
   })
+
+  if (pending.length > 0) {
+    console.log(`[WhatsApp] Processing ${pending.length} queued message(s) for ${connectionId}`)
+  }
 
   for (const msg of pending) {
     await _sendSingleMessage(msg, provider)
@@ -131,7 +165,9 @@ async function _sendSingleMessage(msg, provider) {
       data: { status: "SENDING" },
     })
 
+    console.log(`[WhatsApp] Sending message ${msg.id} to ${msg.recipient}...`)
     const result = await provider.sendMessage(msg.recipient, msg.messageBody)
+    console.log(`[WhatsApp] Send result for ${msg.id}: providerMessageId=${result.providerMessageId}`)
 
     // Update message as SENT
     await prisma.whatsAppMessage.update({
@@ -299,7 +335,13 @@ export async function updateDeliveryStatus(connectionId, providerMessageId, stat
 // ---------------------------------------------------------
 
 export async function sendTestMessage(connectionId, recipient, message) {
-  return queueMessage({
+  // Ensure provider is available before queueing
+  const provider = await _ensureProvider(connectionId)
+  if (!provider || !provider.isConnected) {
+    throw new Error("WhatsApp connection is not active. Please reconnect the connection first.")
+  }
+
+  const msg = await queueMessage({
     connectionId,
     recipient,
     messageBody: message || "XERIN Express test message — this is a test from the WhatsApp Engine.",
@@ -307,6 +349,18 @@ export async function sendTestMessage(connectionId, recipient, message) {
     metadata: { test: true },
     recipientName: "Test",
   })
+
+  // Wait briefly for the async queue processor to attempt delivery
+  await new Promise((r) => setTimeout(r, 2000))
+
+  // Return the updated message status so the caller knows if it was sent
+  const updated = await prisma.whatsAppMessage.findUnique({ where: { id: msg.id } })
+  return {
+    messageId: msg.id,
+    status: updated?.status || "QUEUED",
+    recipient: updated?.recipient,
+    errorMessage: updated?.errorMessage || null,
+  }
 }
 
 // ---------------------------------------------------------
