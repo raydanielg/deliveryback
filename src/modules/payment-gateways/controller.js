@@ -185,6 +185,18 @@ export async function getPaymentRequestStatus(req, res, next) {
       return res.status(403).json({ success: false, message: "You do not have access to this payment request" })
     }
 
+    // PaymentRequest has no direct FK to the Payment applyConfirmedPayment() creates from
+    // it (they're linked only by paymentRef === reference) — look it up so the client can
+    // link straight to a receipt once payment is confirmed, without a second round trip.
+    let paymentId = null
+    if (paymentRequest.isPaid && paymentRequest.orderId) {
+      const payment = await prisma.payment.findFirst({
+        where: { orderId: paymentRequest.orderId, paymentRef: paymentRequest.reference, status: "PAID" },
+        select: { id: true },
+      })
+      paymentId = payment?.id || null
+    }
+
     res.json({
       success: true,
       data: {
@@ -194,6 +206,7 @@ export async function getPaymentRequestStatus(req, res, next) {
         amount: paymentRequest.paymentAmount,
         currency: paymentRequest.currencyCode,
         orderId: paymentRequest.orderId,
+        paymentId,
       },
     })
   } catch (err) { next(err) }

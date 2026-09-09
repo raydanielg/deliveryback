@@ -1,6 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { z } from "zod"
 import { createNotification } from "../notifications/controller.js"
+import { streamPaymentReceipt } from "../../utils/receipt.js"
 
 const createPaymentSchema = z.object({
   orderId: z.string(),
@@ -113,5 +114,31 @@ export async function getPayment(req, res, next) {
     }
 
     res.json({ success: true, data: payment })
+  } catch (err) { next(err) }
+}
+
+// Renders the receipt on demand from the current record rather than a stored file, so it
+// always reflects the payment's actual state and needs no schema change / storage path.
+export async function getPaymentReceipt(req, res, next) {
+  try {
+    const { id } = req.params
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: {
+        order: { include: { shipments: { select: { trackingNumber: true } } } },
+        payer: { select: { name: true } },
+      },
+    })
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" })
+
+    if (req.user.role === "CUSTOMER" && payment.payerId !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Payment not found" })
+    }
+
+    if (payment.status !== "PAID") {
+      return res.status(400).json({ success: false, message: "Receipt is only available for a completed payment" })
+    }
+
+    streamPaymentReceipt(payment, res)
   } catch (err) { next(err) }
 }

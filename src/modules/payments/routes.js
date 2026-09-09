@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { listPayments, createPayment, getPayment } from "./controller.js"
+import { listPayments, createPayment, getPayment, getPaymentReceipt } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
 const router = Router()
@@ -71,5 +71,29 @@ router.post("/", authorizeRoles("SUPER_ADMIN", "FINANCE"), createPayment)
  *         description: Payment not found
  */
 router.get("/:id", getPayment)
+
+/**
+ * @swagger
+ * /api/v1/payments/{id}/receipt:
+ *   get:
+ *     summary: Download a payment's PDF receipt
+ *     description: Streams a generated PDF receipt for a completed (PAID) payment. Same ownership rule as GET /payments/{id} — a customer may only fetch their own payment's receipt.
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: PDF receipt stream
+ *       400:
+ *         description: Payment is not yet PAID
+ *       404:
+ *         description: Payment not found
+ */
+router.get("/:id/receipt", getPaymentReceipt)
 
 export default router
