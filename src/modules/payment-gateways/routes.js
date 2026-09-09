@@ -6,6 +6,7 @@ import {
   getSelcomOrderStatus, cancelSelcomOrder, getPaymentRequestStatus,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
+import { publicEndpointLimiter } from "../../middleware/rate-limit.js"
 
 const router = Router()
 
@@ -27,7 +28,7 @@ const router = Router()
  *       200:
  *         description: Webhook processed
  */
-router.post("/webhooks/selcom", selcomWebhook)
+router.post("/webhooks/selcom", publicEndpointLimiter, selcomWebhook)
 
 /**
  * @swagger
@@ -47,7 +48,7 @@ router.post("/webhooks/selcom", selcomWebhook)
  *       200:
  *         description: Callback processed
  */
-router.post("/callbacks/azampesa", azampesaCallback)
+router.post("/callbacks/azampesa", publicEndpointLimiter, azampesaCallback)
 
 /**
  * @swagger

@@ -23,6 +23,41 @@ export function getWeightTier(weightKg, tiers) {
   return null
 }
 
+// Resolves a known Route's distance from origin/destination city + country names.
+// createShipment/calculateQuote only ever get free-text city/country strings from the
+// address form, never a routeId, so without this every DISTANCE-type pricing rule and
+// every PER_KM surcharge silently priced at distanceKm=0.
+async function resolveDistanceKm(originCity, originCountry, destinationCity, destCountry) {
+  if (!originCity || !destinationCity) return null
+
+  const findCity = (cityName, countryName) =>
+    prisma.city.findFirst({
+      where: {
+        name: { equals: cityName, mode: "insensitive" },
+        ...(countryName ? { country: { name: { equals: countryName, mode: "insensitive" } } } : {}),
+      },
+    })
+
+  const [fromCity, toCity] = await Promise.all([
+    findCity(originCity, originCountry),
+    findCity(destinationCity, destCountry),
+  ])
+  if (!fromCity || !toCity) return null
+
+  // Distance is symmetric even if the Route row was only entered in one direction.
+  const route = await prisma.route.findFirst({
+    where: {
+      isActive: true,
+      OR: [
+        { fromCityId: fromCity.id, toCityId: toCity.id },
+        { fromCityId: toCity.id, toCityId: fromCity.id },
+      ],
+    },
+  })
+
+  return route ? Number(route.distanceKm) : null
+}
+
 async function findApplicableRules(params) {
   const { category, transportMode, serviceLevel, routeId, zoneId, countryId } = params
 
@@ -58,7 +93,9 @@ export async function calculateQuote(params) {
     serviceLevel = "STANDARD",
     originCity,
     destinationCity,
-    distanceKm = 0,
+    originCountry,
+    destCountry,
+    distanceKm: suppliedDistanceKm,
     actualWeightKg,
     lengthCm,
     widthCm,
@@ -70,6 +107,11 @@ export async function calculateQuote(params) {
     declaredValue = 0,
     currency = "TZS",
   } = params
+
+  let distanceKm = suppliedDistanceKm
+  if (!distanceKm) {
+    distanceKm = (await resolveDistanceKm(originCity, originCountry, destinationCity, destCountry)) || 0
+  }
 
   const volumetricWeight = calculateVolumetricWeight(lengthCm, widthCm, heightCm)
   const chargeableWeight = getChargeableWeight(actualWeightKg, volumetricWeight)

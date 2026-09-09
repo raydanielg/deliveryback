@@ -4,12 +4,13 @@ import {
   createShipment, listShipments, getShipment,
   getShipmentByTracking, updateShipmentStatus,
   assignShipment, cancelShipment, getShipmentStats,
-  verifyPickupOtp, verifyDeliveryOtp,
+  verifyPickupOtp, verifyDeliveryOtp, verifyShipmentCode,
   uploadProofOfDelivery, getProofImages,
   scheduleShipment, listScheduledShipments,
   createParcelShipment, cancelShipmentWithReason,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
+import { publicEndpointLimiter } from "../../middleware/rate-limit.js"
 
 const router = Router()
 
@@ -37,7 +38,7 @@ const upload = multer({
  *       404:
  *         description: Shipment not found
  */
-router.get("/track/:trackingNumber", getShipmentByTracking)
+router.get("/track/:trackingNumber", publicEndpointLimiter, getShipmentByTracking)
 
 router.use(authenticate)
 
@@ -178,6 +179,38 @@ router.post("/:id/verify-pickup-otp", verifyPickupOtp)
  *         description: Invalid OTP
  */
 router.post("/:id/verify-delivery-otp", verifyDeliveryOtp)
+
+/**
+ * @swagger
+ * /api/v1/shipments/{id}/verify-code:
+ *   post:
+ *     summary: Verify a scanned QR/barcode belongs to this shipment
+ *     description: Checks a scanned code against the shipment's tracking number and package barcodes. Used by pickup/delivery verification steps so a scan is actually validated server-side instead of just recorded locally.
+ *     tags: [Shipments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [code]
+ *             properties:
+ *               code: { type: string }
+ *               stage: { type: string, enum: [PICKUP, DELIVERY] }
+ *     responses:
+ *       200:
+ *         description: Code matches this shipment
+ *       400:
+ *         description: Code does not match this shipment
+ */
+router.post("/:id/verify-code", verifyShipmentCode)
 
 // Proof of delivery
 /**

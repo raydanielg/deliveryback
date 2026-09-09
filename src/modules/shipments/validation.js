@@ -83,6 +83,11 @@ export const verifyOtpSchema = z.object({
   otp: z.string().min(4).max(6),
 })
 
+export const verifyCodeSchema = z.object({
+  code: z.string().min(1),
+  stage: z.enum(["PICKUP", "DELIVERY"]).optional(),
+})
+
 export const uploadProofSchema = z.object({
   imageUrl: z.string(),
   notes: z.string().optional(),

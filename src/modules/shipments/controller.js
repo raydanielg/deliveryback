@@ -5,7 +5,7 @@ import { calculateQuote } from "../pricing/service.js"
 import { calculateVolumetricWeight, getChargeableWeight } from "../pricing/service.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
 import { createNotification } from "../notifications/controller.js"
-import { createShipmentSchema, updateShipmentStatusSchema, assignShipmentSchema, verifyOtpSchema, uploadProofSchema, scheduleShipmentSchema, createParcelShipmentSchema } from "./validation.js"
+import { createShipmentSchema, updateShipmentStatusSchema, assignShipmentSchema, verifyOtpSchema, verifyCodeSchema, uploadProofSchema, scheduleShipmentSchema, createParcelShipmentSchema } from "./validation.js"
 
 function generateTrackingNumber() {
   const year = new Date().getFullYear()
@@ -313,6 +313,10 @@ export async function updateShipmentStatus(req, res, next) {
   } catch (err) { next(err) }
 }
 
+// A vehicle is "loaded" with a shipment once it's actually been handed to a driver for that
+// leg — before that (PENDING/BOOKED/AWAITING_PICKUP) nothing physical has moved yet.
+const VEHICLE_LOADED_STATUSES = ["DRIVER_ASSIGNED", "ACCEPTED", "OUT_FOR_PICKUP", "PICKED_UP", "IN_TRANSIT", "ONGOING", "OUT_FOR_DELIVERY"]
+
 export async function assignShipment(req, res, next) {
   try {
     const { id } = req.params
@@ -321,34 +325,80 @@ export async function assignShipment(req, res, next) {
     const shipment = await prisma.shipment.findUnique({ where: { id } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
-    const assignment = await prisma.assignment.create({
-      data: {
-        shipmentId: id,
-        driverId: data.driverId,
-        vehicleId: data.vehicleId,
-        assignedById: req.user.id,
-        status: "ASSIGNED",
-      },
-    })
+    const driver = await prisma.driver.findUnique({ where: { id: data.driverId } })
+    if (!driver) return res.status(404).json({ success: false, message: "Driver not found" })
+    if (!driver.isActive) {
+      return res.status(400).json({ success: false, message: "Driver is inactive and cannot be assigned" })
+    }
+    if (driver.status !== "AVAILABLE") {
+      return res.status(400).json({
+        success: false,
+        message: `Driver is not available (currently ${driver.status.replace(/_/g, " ").toLowerCase()})`,
+      })
+    }
+    if (driver.licenseExpiry && driver.licenseExpiry < new Date()) {
+      return res.status(400).json({ success: false, message: "Driver's license has expired" })
+    }
 
-    await prisma.shipment.update({
-      where: { id },
-      data: {
-        driverId: data.driverId,
-        vehicleId: data.vehicleId,
-        status: "DRIVER_ASSIGNED",
-        otp: generateOtp(),
-      },
-    })
+    let vehicle = null
+    if (data.vehicleId) {
+      vehicle = await prisma.vehicle.findUnique({ where: { id: data.vehicleId } })
+      if (!vehicle) return res.status(404).json({ success: false, message: "Vehicle not found" })
+      if (!vehicle.isActive) {
+        return res.status(400).json({ success: false, message: "Vehicle is inactive and cannot be assigned" })
+      }
+      if (vehicle.status !== "AVAILABLE") {
+        return res.status(400).json({
+          success: false,
+          message: `Vehicle is not available (currently ${vehicle.status.replace(/_/g, " ").toLowerCase()})`,
+        })
+      }
 
-    await prisma.trackingEvent.create({
-      data: {
-        shipmentId: id,
-        event: "DRIVER_ASSIGNED",
-        status: "DRIVER_ASSIGNED",
-        description: "Driver has been assigned to this shipment",
-        createdBy: req.user.id,
-      },
+      const currentLoad = await prisma.shipment.aggregate({
+        where: { vehicleId: vehicle.id, status: { in: VEHICLE_LOADED_STATUSES }, id: { not: id } },
+        _sum: { chargeableWeightKg: true },
+      })
+      const projectedLoad = Number(currentLoad._sum.chargeableWeightKg || 0) + Number(shipment.chargeableWeightKg)
+      if (projectedLoad > Number(vehicle.capacityKg)) {
+        return res.status(400).json({
+          success: false,
+          message: `Vehicle capacity exceeded: ${projectedLoad.toFixed(2)}kg requested vs ${Number(vehicle.capacityKg).toFixed(2)}kg capacity`,
+        })
+      }
+    }
+
+    const assignment = await prisma.$transaction(async (tx) => {
+      const assignment = await tx.assignment.create({
+        data: {
+          shipmentId: id,
+          driverId: data.driverId,
+          vehicleId: data.vehicleId,
+          assignedById: req.user.id,
+          status: "ASSIGNED",
+        },
+      })
+
+      await tx.shipment.update({
+        where: { id },
+        data: {
+          driverId: data.driverId,
+          vehicleId: data.vehicleId,
+          status: "DRIVER_ASSIGNED",
+          otp: generateOtp(),
+        },
+      })
+
+      await tx.trackingEvent.create({
+        data: {
+          shipmentId: id,
+          event: "DRIVER_ASSIGNED",
+          status: "DRIVER_ASSIGNED",
+          description: "Driver has been assigned to this shipment",
+          createdBy: req.user.id,
+        },
+      })
+
+      return assignment
     })
 
     res.json({ success: true, data: assignment })
@@ -492,6 +542,47 @@ export async function verifyDeliveryOtp(req, res, next) {
     })
 
     res.json({ success: true, data: updated, message: "Delivery confirmed successfully" })
+  } catch (err) { next(err) }
+}
+
+// Verifies a QR/barcode scan actually belongs to this shipment before letting a driver,
+// SGR officer, or warehouse handler proceed past a pickup/delivery verification step —
+// previously the app only checked that *some* code had been scanned, never that it was
+// the right one, so scanning any code (or the wrong package) would silently pass.
+export async function verifyShipmentCode(req, res, next) {
+  try {
+    const { id } = req.params
+    const { code, stage } = verifyCodeSchema.parse(req.body)
+
+    const shipment = await prisma.shipment.findUnique({
+      where: { id },
+      include: { packages: { select: { barcode: true } } },
+    })
+    if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+
+    const normalizedCode = code.trim().toUpperCase()
+    const matches =
+      normalizedCode === shipment.trackingNumber.toUpperCase() ||
+      shipment.packages.some((pkg) => pkg.barcode.toUpperCase() === normalizedCode)
+
+    if (!matches) {
+      return res.status(400).json({
+        success: false,
+        message: "Scanned code does not match this shipment",
+      })
+    }
+
+    await prisma.trackingEvent.create({
+      data: {
+        shipmentId: id,
+        event: stage ? `CODE_VERIFIED_${stage}` : "CODE_VERIFIED",
+        status: shipment.status,
+        description: `Package code verified${stage ? ` for ${stage.toLowerCase()}` : ""}`,
+        createdBy: req.user?.id,
+      },
+    })
+
+    res.json({ success: true, message: "Code verified", data: { trackingNumber: shipment.trackingNumber } })
   } catch (err) { next(err) }
 }
 

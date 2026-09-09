@@ -73,3 +73,22 @@ export async function createRoute(req, res, next) {
     res.status(201).json({ success: true, data: route })
   } catch (err) { next(err) }
 }
+
+export async function updateRoute(req, res, next) {
+  try {
+    const { id } = req.params
+    const data = createRouteSchema.partial().parse(req.body)
+    const route = await prisma.route.update({ where: { id }, data })
+    res.json({ success: true, data: route })
+  } catch (err) { next(err) }
+}
+
+export async function deleteRoute(req, res, next) {
+  try {
+    const { id } = req.params
+    // Soft delete — a Route can be referenced by PricingRule/Manifest rows, and
+    // distance history for past shipments should stay intact.
+    await prisma.route.update({ where: { id }, data: { isActive: false } })
+    res.json({ success: true, message: "Route deactivated" })
+  } catch (err) { next(err) }
+}

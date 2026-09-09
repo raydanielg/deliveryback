@@ -42,6 +42,12 @@ model User {
   handovers     ManifestHandover[] @relation("handoverCompletedBy")
   customsDeclarations CustomsDeclaration[]
   blogPosts          BlogPost[]       @relation("blogPostsAuthor")
+  claims             Claim[]          @relation("claimsCreatedBy")
+  claimsAssigned     Claim[]          @relation("claimsAssignedTo")
+  claimsResolved     Claim[]          @relation("claimsResolvedBy")
+  tickets            SupportTicket[]  @relation("ticketsCreatedBy")
+  ticketsAssigned    SupportTicket[]  @relation("ticketsAssignedTo")
+  ticketReplies      TicketReply[]
 
   @@index([email])
   @@map("users")
@@ -766,6 +772,8 @@ model Shipment {
   destinationStation Station?      @relation("destStationShipments", fields: [destinationStationId], references: [id])
   stationInventory StationInventory[]
   exceptions       ShipmentException[]
+  claims           Claim[]
+  tickets          SupportTicket[]
 
   // Station fields
   stationId        String?
@@ -1243,6 +1251,52 @@ enum NotificationChannel {
 }
 
 // ============================================================
+// SUPPORT TICKETS
+// ============================================================
+
+model SupportTicket {
+  id           String       @id @default(cuid())
+  ticketNumber String       @unique
+  customerId   String
+  subject      String
+  message      String
+  shipmentId   String?
+  status       TicketStatus @default(OPEN)
+  assignedToId String?
+  resolvedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  customer     User          @relation("ticketsCreatedBy", fields: [customerId], references: [id])
+  assignedTo   User?         @relation("ticketsAssignedTo", fields: [assignedToId], references: [id])
+  shipment     Shipment?     @relation(fields: [shipmentId], references: [id])
+  replies      TicketReply[]
+
+  @@index([status])
+  @@map("support_tickets")
+}
+
+model TicketReply {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  message   String
+  createdAt DateTime @default(now())
+
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    User          @relation(fields: [authorId], references: [id])
+
+  @@map("ticket_replies")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+// ============================================================
 // RATINGS & REVIEWS
 // ============================================================
 
@@ -1559,6 +1613,57 @@ enum ExceptionStatus {
   IN_REVIEW
   RESOLVED
   ESCALATED
+  CLOSED
+}
+
+// ============================================================
+// CLAIMS (customer-facing: lost/damaged/missing/wrong delivery)
+// ============================================================
+
+model Claim {
+  id             String      @id @default(cuid())
+  claimNumber    String      @unique
+  shipmentId     String
+  customerId     String
+  type           ClaimType
+  status         ClaimStatus @default(OPEN)
+  description    String
+  claimedAmount  Decimal?    @db.Decimal(12, 2)
+  evidenceUrls   String[]    @default([])
+  resolution     String?
+  resolvedAmount Decimal?    @db.Decimal(12, 2)
+  assignedToId   String?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  shipment       Shipment    @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  customer       User        @relation("claimsCreatedBy", fields: [customerId], references: [id])
+  assignedTo     User?       @relation("claimsAssignedTo", fields: [assignedToId], references: [id])
+  resolvedBy     User?       @relation("claimsResolvedBy", fields: [resolvedById], references: [id])
+
+  @@index([status])
+  @@index([shipmentId])
+  @@map("claims")
+}
+
+enum ClaimType {
+  LOST
+  DAMAGED
+  MISSING_ITEM
+  WRONG_DELIVERY
+  DELAYED
+  OTHER
+}
+
+enum ClaimStatus {
+  OPEN
+  UNDER_REVIEW
+  INVESTIGATION
+  APPROVED
+  REJECTED
+  RESOLUTION
   CLOSED
 }
 

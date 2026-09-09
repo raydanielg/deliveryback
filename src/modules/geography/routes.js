@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { listCountries, createCountry, listCities, createCity, listRoutes, createRoute } from "./controller.js"
+import { listCountries, createCountry, listCities, createCity, listRoutes, createRoute, updateRoute, deleteRoute } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
 const router = Router()
@@ -129,5 +129,7 @@ router.post("/cities", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), crea
  *         description: Insufficient permissions
  */
 router.post("/routes", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createRoute)
+router.put("/routes/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateRoute)
+router.delete("/routes/:id", authorizeRoles("SUPER_ADMIN"), deleteRoute)
 
 export default router

@@ -45,11 +45,16 @@ import bookingRoutes from "./modules/booking/routes.js"
 import reportsRoutes from "./modules/reports/routes.js"
 import trainCapacityRoutes from "./modules/train-capacity/routes.js"
 import marketplaceIntegrationsRoutes from "./modules/marketplace-integrations/routes.js"
+import claimsRoutes from "./modules/claims/routes.js"
+import ticketsRoutes from "./modules/tickets/routes.js"
+import addressesRoutes from "./modules/addresses/routes.js"
+import packagesRoutes from "./modules/packages/routes.js"
 import { listAuditLogs } from "./middleware/audit-logger.js"
 import { authenticate, authorizeRoles } from "./middleware/auth.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
 import { verifyEmailConnection } from "./modules/auth/email.service.js"
 import { sendSms } from "./modules/auth/sms.service.js"
+import { apiLimiter } from "./middleware/rate-limit.js"
 
 dotenv.config()
 
@@ -138,6 +143,10 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   },
 }))
 
+// Baseline rate limit across the whole API — previously only /api/v1/auth had any request
+// throttling, leaving every other endpoint (including unauthenticated ones) unprotected.
+app.use("/api/v1", apiLimiter)
+
 app.use("/api/v1/auth", authRoutes)
 app.use("/api/v1/pricing", pricingRoutes)
 app.use("/api/v1/quotes", quotesRoutes)
@@ -175,6 +184,10 @@ app.use("/api/v1/booking", bookingRoutes)
 app.use("/api/v1/reports", reportsRoutes)
 app.use("/api/v1/train-capacity", trainCapacityRoutes)
 app.use("/api/v1/marketplace-integrations", marketplaceIntegrationsRoutes)
+app.use("/api/v1/claims", claimsRoutes)
+app.use("/api/v1/support/tickets", ticketsRoutes)
+app.use("/api/v1/addresses", addressesRoutes)
+app.use("/api/v1/packages", packagesRoutes)
 
 // Audit logs
 app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)
