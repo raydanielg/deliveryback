@@ -68,6 +68,7 @@ router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createCarr
  *       404:
  *         description: Carrier not found
  */
-router.get("/:id", getCarrier)
+// Exposes carrier's driver names/phone numbers — staff-only.
+router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getCarrier)
 
 export default router

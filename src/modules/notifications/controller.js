@@ -14,10 +14,13 @@ export async function listNotifications(req, res, next) {
 export async function markAsRead(req, res, next) {
   try {
     const { id } = req.params
-    await prisma.notification.update({
-      where: { id },
+    // Scoped by userId too — previously any authenticated user could mark any other
+    // user's notification as read by guessing its id.
+    const { count } = await prisma.notification.updateMany({
+      where: { id, userId: req.user.id },
       data: { isRead: true },
     })
+    if (count === 0) return res.status(404).json({ success: false, message: "Notification not found" })
     res.json({ success: true, message: "Notification marked as read" })
   } catch (err) { next(err) }
 }

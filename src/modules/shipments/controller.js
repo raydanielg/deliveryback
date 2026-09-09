@@ -6,6 +6,8 @@ import { calculateVolumetricWeight, getChargeableWeight } from "../pricing/servi
 import { triggerStatusNotification } from "../notification-service/controller.js"
 import { createNotification } from "../notifications/controller.js"
 import { createShipmentSchema, updateShipmentStatusSchema, assignShipmentSchema, verifyOtpSchema, verifyCodeSchema, uploadProofSchema, scheduleShipmentSchema, createParcelShipmentSchema } from "./validation.js"
+import { emitEvent, EVENTS, SHIPMENT_STATUS_EVENT_MAP } from "../integrations/event-bus.js"
+import { logAction } from "../../middleware/audit-logger.js"
 
 function generateTrackingNumber() {
   const year = new Date().getFullYear()
@@ -165,6 +167,12 @@ export async function createShipment(req, res, next) {
       console.warn("Shipment notification failed:", notifErr.message)
     }
 
+    await emitEvent(EVENTS.SHIPMENT_CREATED, {
+      shipment_id: shipment.id,
+      tracking_number: shipment.trackingNumber,
+      status: shipment.status,
+    })
+
     res.status(201).json({
       success: true,
       message: "Shipment created successfully",
@@ -241,6 +249,19 @@ export async function getShipment(req, res, next) {
 
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
+    // IDOR guard — this previously returned any shipment by id to any authenticated user,
+    // including full addresses, payments, and invoices. A 404 (not 403) on mismatch avoids
+    // confirming to an unauthorized caller that the id even exists.
+    if (req.user.role === "CUSTOMER" && shipment.createdById !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Shipment not found" })
+    }
+    if (req.user.role === "DRIVER") {
+      const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+      if (!driver || shipment.driverId !== driver.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+    }
+
     res.json({ success: true, data: shipment })
   } catch (err) { next(err) }
 }
@@ -309,6 +330,14 @@ export async function updateShipmentStatus(req, res, next) {
 
     triggerStatusNotification(id, data.status)
 
+    const eventName = SHIPMENT_STATUS_EVENT_MAP[data.status] || EVENTS.SHIPMENT_UPDATED
+    await emitEvent(eventName, {
+      shipment_id: updated.id,
+      tracking_number: updated.trackingNumber,
+      status: updated.status,
+      external_reference: updated.externalReference,
+    }, updated.partnerId ? { partnerId: updated.partnerId } : {})
+
     res.json({ success: true, data: updated })
   } catch (err) { next(err) }
 }
@@ -325,32 +354,56 @@ export async function assignShipment(req, res, next) {
     const shipment = await prisma.shipment.findUnique({ where: { id } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
-    const driver = await prisma.driver.findUnique({ where: { id: data.driverId } })
+    const wasReassignment = !!shipment.driverId
+
+    const driver = await prisma.driver.findUnique({ where: { id: data.driverId }, include: { documents: true } })
     if (!driver) return res.status(404).json({ success: false, message: "Driver not found" })
     if (!driver.isActive) {
-      return res.status(400).json({ success: false, message: "Driver is inactive and cannot be assigned" })
+      return res.status(400).json({ success: false, message: "Driver unavailable for assignment. Reason: Driver account is inactive" })
+    }
+    if (driver.approvalStatus !== "ACTIVE") {
+      return res.status(400).json({
+        success: false,
+        message: `Driver unavailable for assignment. Reason: Driver approval status is ${driver.approvalStatus.replace(/_/g, " ").toLowerCase()}`,
+      })
     }
     if (driver.status !== "AVAILABLE") {
       return res.status(400).json({
         success: false,
-        message: `Driver is not available (currently ${driver.status.replace(/_/g, " ").toLowerCase()})`,
+        message: `Driver unavailable for assignment. Reason: Driver is currently ${driver.status.replace(/_/g, " ").toLowerCase()}`,
       })
     }
     if (driver.licenseExpiry && driver.licenseExpiry < new Date()) {
-      return res.status(400).json({ success: false, message: "Driver's license has expired" })
+      return res.status(400).json({ success: false, message: "Driver unavailable for assignment. Reason: Driving license has expired" })
+    }
+    const expiredDoc = driver.documents.find((d) => d.expiryDate && d.expiryDate < new Date() && d.status !== "REJECTED")
+    if (expiredDoc) {
+      return res.status(400).json({
+        success: false,
+        message: `Driver unavailable for assignment. Reason: ${expiredDoc.type.replace(/_/g, " ").toLowerCase()} document has expired`,
+      })
     }
 
     let vehicle = null
+    let capacityOverridden = false
     if (data.vehicleId) {
       vehicle = await prisma.vehicle.findUnique({ where: { id: data.vehicleId } })
       if (!vehicle) return res.status(404).json({ success: false, message: "Vehicle not found" })
       if (!vehicle.isActive) {
-        return res.status(400).json({ success: false, message: "Vehicle is inactive and cannot be assigned" })
+        return res.status(400).json({ success: false, message: "Vehicle unavailable for assignment. Reason: Vehicle is inactive" })
       }
       if (vehicle.status !== "AVAILABLE") {
         return res.status(400).json({
           success: false,
-          message: `Vehicle is not available (currently ${vehicle.status.replace(/_/g, " ").toLowerCase()})`,
+          message: `Vehicle unavailable for assignment. Reason: Vehicle is currently ${vehicle.status.replace(/_/g, " ").toLowerCase()}`,
+        })
+      }
+      const expiredCompliance = ["insuranceExpiry", "roadLicenseExpiry", "inspectionExpiry", "fitnessExpiry"]
+        .find((field) => vehicle[field] && vehicle[field] < new Date())
+      if (expiredCompliance) {
+        return res.status(400).json({
+          success: false,
+          message: `Vehicle unavailable for assignment. Reason: ${expiredCompliance.replace("Expiry", "").replace(/([A-Z])/g, " $1").trim()} has expired`,
         })
       }
 
@@ -360,10 +413,14 @@ export async function assignShipment(req, res, next) {
       })
       const projectedLoad = Number(currentLoad._sum.chargeableWeightKg || 0) + Number(shipment.chargeableWeightKg)
       if (projectedLoad > Number(vehicle.capacityKg)) {
-        return res.status(400).json({
-          success: false,
-          message: `Vehicle capacity exceeded: ${projectedLoad.toFixed(2)}kg requested vs ${Number(vehicle.capacityKg).toFixed(2)}kg capacity`,
-        })
+        const canOverride = data.overrideCapacity && data.overrideReason && ["SUPER_ADMIN", "OPERATIONS_MANAGER"].includes(req.user.role)
+        if (!canOverride) {
+          return res.status(400).json({
+            success: false,
+            message: `Vehicle capacity exceeded: ${projectedLoad.toFixed(2)}kg requested vs ${Number(vehicle.capacityKg).toFixed(2)}kg capacity`,
+          })
+        }
+        capacityOverridden = true
       }
     }
 
@@ -375,6 +432,9 @@ export async function assignShipment(req, res, next) {
           vehicleId: data.vehicleId,
           assignedById: req.user.id,
           status: "ASSIGNED",
+          capacityOverridden,
+          overrideReason: capacityOverridden ? data.overrideReason : null,
+          overrideById: capacityOverridden ? req.user.id : null,
         },
       })
 
@@ -387,6 +447,7 @@ export async function assignShipment(req, res, next) {
           otp: generateOtp(),
         },
       })
+      await tx.driver.update({ where: { id: data.driverId }, data: { status: "ASSIGNED" } })
 
       await tx.trackingEvent.create({
         data: {
@@ -400,6 +461,17 @@ export async function assignShipment(req, res, next) {
 
       return assignment
     })
+
+    if (capacityOverridden) {
+      await logAction({ userId: req.user.id, action: "CAPACITY_OVERRIDE", entity: "assignment", entityId: assignment.id, changes: { shipmentId: id, vehicleId: data.vehicleId, reason: data.overrideReason }, req })
+    }
+
+    await emitEvent(wasReassignment ? EVENTS.DRIVER_REASSIGNED : EVENTS.DRIVER_ASSIGNED, {
+      shipment_id: id,
+      tracking_number: shipment.trackingNumber,
+      driver_id: data.driverId,
+      vehicle_id: data.vehicleId || null,
+    }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
 
     res.json({ success: true, data: assignment })
   } catch (err) { next(err) }
@@ -432,6 +504,17 @@ export async function cancelShipment(req, res, next) {
         createdBy: req.user.id,
       },
     })
+
+    if (shipment.driverId) {
+      await prisma.driver.updateMany({
+        where: { id: shipment.driverId, status: { in: ["ASSIGNED", "ON_PICKUP", "ON_DELIVERY", "ON_TRIP"] } },
+        data: { status: "AVAILABLE" },
+      })
+    }
+
+    await emitEvent(EVENTS.SHIPMENT_CANCELLED, {
+      shipment_id: id, tracking_number: updated.trackingNumber, status: "CANCELLED",
+    }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
 
     res.json({ success: true, data: updated })
   } catch (err) { next(err) }
@@ -498,6 +581,12 @@ export async function verifyPickupOtp(req, res, next) {
       },
     })
 
+    if (shipment.driverId) {
+      await prisma.driver.update({ where: { id: shipment.driverId }, data: { status: "ON_TRIP" } })
+    }
+
+    await emitEvent(EVENTS.CARGO_PICKED_UP, { shipment_id: id, tracking_number: updated.trackingNumber, status: "PICKED_UP" }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
+
     res.json({ success: true, data: updated, message: "OTP verified successfully" })
   } catch (err) { next(err) }
 }
@@ -540,6 +629,19 @@ export async function verifyDeliveryOtp(req, res, next) {
         createdBy: req.user?.id,
       },
     })
+
+    if (shipment.driverId) {
+      // Delivery complete — driver is no longer tied up on this shipment. Only reset to
+      // AVAILABLE from a genuinely-busy state, so a driver an admin deliberately put
+      // OFFLINE/ON_BREAK/SUSPENDED doesn't get silently flipped back to available.
+      await prisma.driver.updateMany({
+        where: { id: shipment.driverId, status: { in: ["ASSIGNED", "ON_PICKUP", "ON_DELIVERY", "ON_TRIP"] } },
+        data: { status: "AVAILABLE" },
+      })
+    }
+
+    await emitEvent(EVENTS.SHIPMENT_DELIVERED, { shipment_id: id, tracking_number: updated.trackingNumber, status: "DELIVERED" }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
+    await emitEvent(EVENTS.POD_CREATED, { shipment_id: id, tracking_number: updated.trackingNumber }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
 
     res.json({ success: true, data: updated, message: "Delivery confirmed successfully" })
   } catch (err) { next(err) }

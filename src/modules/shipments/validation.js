@@ -141,4 +141,8 @@ export const assignShipmentSchema = z.object({
   driverId: z.string(),
   vehicleId: z.string().optional(),
   notes: z.string().optional(),
+  // Explicit, audited override for a capacity check that would otherwise reject the
+  // assignment — never applied silently, always requires a reason and is logged.
+  overrideCapacity: z.boolean().default(false),
+  overrideReason: z.string().min(5).optional(),
 })

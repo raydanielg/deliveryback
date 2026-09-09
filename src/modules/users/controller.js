@@ -159,6 +159,16 @@ export async function changeUserRole(req, res, next) {
 export async function changePassword(req, res, next) {
   try {
     const { id } = req.params
+
+    // This is a self-service "I know my current password" flow, not an admin reset —
+    // it only checks the CURRENT password matches, never who is calling. Without this,
+    // anyone who learns another user's current password (e.g. every customer created by
+    // an admin starts on the same hardcoded default in customers/controller.js) can call
+    // this for that user's id and take the account over.
+    if (req.user.id !== id) {
+      return res.status(403).json({ success: false, message: "You can only change your own password" })
+    }
+
     const data = changePasswordSchema.parse(req.body)
 
     const user = await prisma.user.findUnique({ where: { id } })

@@ -85,7 +85,10 @@ router.post("/driver/location", authorizeRoles("DRIVER"), updateDriverLocation)
  *       404:
  *         description: Driver not found or no location data
  */
-router.get("/driver/:driverId", getDriverLocation)
+// Live GPS + name/phone for a driver — internal fleet-tracking dashboard feature only
+// (front/apps/web's "Driver Locations" page); no customer-facing client calls this.
+// Previously had no role check at all.
+router.get("/driver/:driverId", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getDriverLocation)
 
 /**
  * @swagger
@@ -120,6 +123,10 @@ router.get("/driver/:driverId", getDriverLocation)
  *       404:
  *         description: Shipment not found
  */
-router.post("/shipments/:shipmentId/events", addTrackingEvent)
+router.post(
+  "/shipments/:shipmentId/events",
+  authorizeRoles("DRIVER", "SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER"),
+  addTrackingEvent
+)
 
 export default router

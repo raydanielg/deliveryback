@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { getPackageByBarcode, listPackagesForShipment, scanPackage, getPackageDiscrepancy } from "./controller.js"
-import { authenticate } from "../../middleware/auth.js"
+import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
 const router = Router()
 
@@ -94,6 +94,13 @@ router.get("/shipment/:shipmentId/discrepancy", getPackageDiscrepancy)
  *       404:
  *         description: Package not found
  */
-router.post("/scan", scanPackage)
+// Scanning is a physical-handling action performed by drivers and warehouse/dispatch
+// staff, never by customers — previously any authenticated user (including a CUSTOMER)
+// could scan any package by barcode and force its lifecycle status forward.
+router.post(
+  "/scan",
+  authorizeRoles("DRIVER", "WAREHOUSE_MANAGER", "DISPATCHER", "SGR_STATION_OFFICER", "OPERATIONS_MANAGER", "SUPER_ADMIN"),
+  scanPackage
+)
 
 export default router

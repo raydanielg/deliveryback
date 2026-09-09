@@ -1,5 +1,6 @@
 import prisma from "../../prisma/client.js"
 import { z } from "zod"
+import { emitEvent, EVENTS } from "../integrations/event-bus.js"
 
 const createCustomsSchema = z.object({
   shipmentId: z.string(),
@@ -92,6 +93,15 @@ export async function updateCustomsStatus(req, res, next) {
         where: { id: declaration.shipmentId },
         data: { status: "CUSTOMS_CLEARED" },
       })
+    }
+
+    if (status === "HELD" || status === "CLEARED") {
+      const shipment = await prisma.shipment.findUnique({ where: { id: declaration.shipmentId }, select: { trackingNumber: true, partnerId: true } })
+      await emitEvent(status === "HELD" ? EVENTS.CUSTOMS_HOLD : EVENTS.CUSTOMS_RELEASED, {
+        shipment_id: declaration.shipmentId,
+        tracking_number: shipment?.trackingNumber,
+        notes,
+      }, shipment?.partnerId ? { partnerId: shipment.partnerId } : {})
     }
 
     res.json({ success: true, data: declaration })

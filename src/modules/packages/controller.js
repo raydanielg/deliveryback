@@ -1,6 +1,21 @@
 import prisma from "../../prisma/client.js"
 import { scanPackageSchema } from "./validation.js"
 
+const PACKAGE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "CUSTOMER_SUPPORT"]
+
+// Shared ownership check for CUSTOMER/DRIVER against the shipment a package belongs to —
+// mirrors the pattern already used in shipments.getShipment. Returns true if allowed.
+async function canAccessShipment(req, shipment) {
+  if (!shipment) return false
+  if (PACKAGE_STAFF.includes(req.user.role)) return true
+  if (req.user.role === "CUSTOMER") return shipment.createdById === req.user.id
+  if (req.user.role === "DRIVER") {
+    const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+    return !!driver && shipment.driverId === driver.id
+  }
+  return false
+}
+
 // Forward progression only — DAMAGED/LOST are exception branches reachable from any
 // non-terminal state, and DELIVERED is terminal. Mirrors the shipment-level status
 // transition guard so a scan can't "un-deliver" or skip backward.
@@ -21,9 +36,14 @@ export async function getPackageByBarcode(req, res, next) {
     const { barcode } = req.params
     const pkg = await prisma.package.findUnique({
       where: { barcode },
-      include: { shipment: { select: { id: true, trackingNumber: true, status: true } } },
+      include: { shipment: { select: { id: true, trackingNumber: true, status: true, createdById: true, driverId: true } } },
     })
     if (!pkg) return res.status(404).json({ success: false, message: "Package not found" })
+
+    if (!(await canAccessShipment(req, pkg.shipment))) {
+      return res.status(404).json({ success: false, message: "Package not found" })
+    }
+
     res.json({ success: true, data: pkg })
   } catch (err) { next(err) }
 }
@@ -31,6 +51,16 @@ export async function getPackageByBarcode(req, res, next) {
 export async function listPackagesForShipment(req, res, next) {
   try {
     const { shipmentId } = req.params
+
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { createdById: true, driverId: true },
+    })
+    if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+    if (!(await canAccessShipment(req, shipment))) {
+      return res.status(404).json({ success: false, message: "Shipment not found" })
+    }
+
     const packages = await prisma.package.findMany({ where: { shipmentId }, orderBy: { createdAt: "asc" } })
     const byStatus = packages.reduce((acc, p) => {
       acc[p.status] = (acc[p.status] || 0) + 1
@@ -87,6 +117,16 @@ export async function scanPackage(req, res, next) {
 export async function getPackageDiscrepancy(req, res, next) {
   try {
     const { shipmentId } = req.params
+
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { createdById: true, driverId: true },
+    })
+    if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+    if (!(await canAccessShipment(req, shipment))) {
+      return res.status(404).json({ success: false, message: "Shipment not found" })
+    }
+
     const packages = await prisma.package.findMany({ where: { shipmentId } })
     const expected = packages.length
     const scanned = packages.filter((p) => p.status !== "CREATED").length

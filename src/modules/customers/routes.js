@@ -19,7 +19,11 @@ router.use(authenticate)
  *       200:
  *         description: List of customers
  */
-router.get("/", listCustomers)
+// Staff-only — the customer mobile app never calls this route (it has no "my profile"
+// use of it), so there is no legitimate self-access case to carve out. Previously any
+// authenticated user, including a CUSTOMER, could page through every customer's name/
+// email/phone/organization.
+router.get("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_SUPPORT", "FINANCE"), listCustomers)
 
 /**
  * @swagger
@@ -68,7 +72,9 @@ router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_S
  *       404:
  *         description: Customer not found
  */
-router.get("/:id", getCustomer)
+// Staff-only, same reasoning as GET / above — this returned full order/shipment/
+// spend history and address book for any customer ID to any authenticated user.
+router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_SUPPORT", "FINANCE"), getCustomer)
 
 /**
  * @swagger
@@ -125,6 +131,8 @@ router.put("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER
  *       404:
  *         description: Customer not found
  */
-router.get("/:id/stats", getCustomerStats)
+// Staff-only, same reasoning as above — exposed another customer's total spend/
+// shipment counts to any authenticated user.
+router.get("/:id/stats", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_SUPPORT", "FINANCE"), getCustomerStats)
 
 export default router

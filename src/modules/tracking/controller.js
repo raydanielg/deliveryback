@@ -75,12 +75,19 @@ export async function getShipmentTracking(req, res, next) {
         id: true,
         trackingNumber: true,
         status: true,
+        paymentStatus: true,
         category: true,
         transportMode: true,
+        serviceLevel: true,
         fromAddress: true,
         toAddress: true,
+        estimatedPickup: true,
         estimatedDelivery: true,
+        actualPickup: true,
         actualDelivery: true,
+        cancellationReason: true,
+        // Public-safe subset only — never expose the driver's own address/license/etc. here.
+        driver: { select: { user: { select: { name: true, phone: true } } } },
       },
     })
 
@@ -96,12 +103,15 @@ export async function getShipmentTracking(req, res, next) {
       orderBy: { createdAt: "desc" },
     })
 
+    const podCount = await prisma.shipmentProofImage.count({ where: { shipmentId: shipment.id } })
+
     res.json({
       success: true,
       data: {
         shipment,
         events,
         timeline: history,
+        podAvailable: podCount > 0,
       },
     })
   } catch (err) { next(err) }
@@ -114,6 +124,16 @@ export async function addTrackingEvent(req, res, next) {
 
     const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+
+    // Only the driver assigned to this shipment (or staff) may inject an event onto its
+    // public timeline — previously any authenticated user could add arbitrary events to
+    // any shipment.
+    if (req.user.role === "DRIVER") {
+      const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+      if (!driver || shipment.driverId !== driver.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+    }
 
     const trackingEvent = await prisma.trackingEvent.create({
       data: {

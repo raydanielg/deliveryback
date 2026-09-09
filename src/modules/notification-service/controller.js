@@ -279,6 +279,10 @@ export async function triggerStatusNotification(shipmentId, newStatus, stationNa
       trackingNumber: shipment.trackingNumber,
       stationName,
     }, channels)
+
+    // Trigger WhatsApp notification (non-blocking, never corrupts shipment)
+    const { triggerWhatsAppFromShipmentStatus } = await import("../whatsapp/event-integration.js")
+    triggerWhatsAppFromShipmentStatus(shipmentId, newStatus, stationName ? { station_name: stationName } : {})
   } catch (err) {
     console.error("Trigger notification error:", err.message)
   }
@@ -296,6 +300,10 @@ export async function triggerPaymentNotification(shipmentId, amount, currency) {
       id: shipment.id,
       trackingNumber: shipment.trackingNumber,
     })
+
+    // Trigger WhatsApp notification (non-blocking)
+    const { triggerWhatsAppFromPaymentEvent } = await import("../whatsapp/event-integration.js")
+    triggerWhatsAppFromPaymentEvent(shipmentId, amount, currency, null, true)
   } catch (err) {
     console.error("Payment notification error:", err.message)
   }
@@ -313,6 +321,10 @@ export async function triggerDriverAssignedNotification(shipmentId, driverName) 
       id: shipment.id,
       trackingNumber: shipment.trackingNumber,
     })
+
+    // Trigger WhatsApp notification (non-blocking)
+    const { triggerWhatsAppFromDriverEvent } = await import("../whatsapp/event-integration.js")
+    triggerWhatsAppFromDriverEvent(shipmentId, "DRIVER_ASSIGNED", driverName)
   } catch (err) {
     console.error("Driver assigned notification error:", err.message)
   }

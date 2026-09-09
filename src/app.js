@@ -49,6 +49,13 @@ import claimsRoutes from "./modules/claims/routes.js"
 import ticketsRoutes from "./modules/tickets/routes.js"
 import addressesRoutes from "./modules/addresses/routes.js"
 import packagesRoutes from "./modules/packages/routes.js"
+import integrationsRoutes from "./modules/integrations/routes.js"
+import dispatchRoutes from "./modules/dispatch/routes.js"
+import transportRoutes from "./modules/transport/routes.js"
+import tripRoutes from "./modules/trips/routes.js"
+import whatsappRoutes from "./modules/whatsapp/routes.js"
+import { initWhatsAppEngine } from "./modules/whatsapp/controller.js"
+import { initWhatsAppEventIntegration } from "./modules/whatsapp/event-integration.js"
 import { listAuditLogs } from "./middleware/audit-logger.js"
 import { authenticate, authorizeRoles } from "./middleware/auth.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
@@ -188,6 +195,11 @@ app.use("/api/v1/claims", claimsRoutes)
 app.use("/api/v1/support/tickets", ticketsRoutes)
 app.use("/api/v1/addresses", addressesRoutes)
 app.use("/api/v1/packages", packagesRoutes)
+app.use("/api/v1/integrations", integrationsRoutes)
+app.use("/api/v1/dispatch", dispatchRoutes)
+app.use("/api/v1/transport", transportRoutes)
+app.use("/api/v1/trips", tripRoutes)
+app.use("/api/v1/whatsapp", whatsappRoutes)
 
 // Audit logs
 app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)

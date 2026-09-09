@@ -17,7 +17,12 @@ function generatePaymentRef() {
 
 export async function listPayments(req, res, next) {
   try {
+    // Previously unscoped — any authenticated user, including a customer, could list the
+    // 50 most recent payments platform-wide (amounts, methods, transaction IDs, other
+    // customers' names/emails).
+    const where = req.user.role === "CUSTOMER" ? { payerId: req.user.id } : {}
     const payments = await prisma.payment.findMany({
+      where,
       include: { order: true, payer: { select: { name: true, email: true } } },
       orderBy: { createdAt: "desc" },
       take: 50,
@@ -102,6 +107,11 @@ export async function getPayment(req, res, next) {
       include: { order: true },
     })
     if (!payment) return res.status(404).json({ success: false, message: "Payment not found" })
+
+    if (req.user.role === "CUSTOMER" && payment.payerId !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Payment not found" })
+    }
+
     res.json({ success: true, data: payment })
   } catch (err) { next(err) }
 }

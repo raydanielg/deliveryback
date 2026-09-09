@@ -66,6 +66,9 @@ enum UserRole {
   REPORT_VIEWER
   CUSTOMER
   DRIVER
+  // Attribution anchor for records created by an external partner via the integration API —
+  // never a real login identity. See getOrCreateIntegrationSystemUser().
+  PARTNER_API
 }
 
 // ============================================================
@@ -213,15 +216,24 @@ model Driver {
   id              String       @id @default(cuid())
   userId          String       @unique
   licenseNumber   String
+  licenseClass    String?
+  licenseIssueDate DateTime?
   licenseExpiry   DateTime?
+  employmentType  String?      // e.g. EMPLOYEE, CONTRACTOR, PARTNER
   carrierId       String?
   status          DriverStatus @default(AVAILABLE)
+  approvalStatus  DriverApprovalStatus @default(PENDING_VERIFICATION)
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  internalNotes   String?      // visible only to roles with drivers.manage
   rating          Float?
   totalDeliveries Int          @default(0)
   currentLatitude Float?
   currentLongitude Float?
   lastLocationAt  DateTime?
   isActive        Boolean      @default(true)
+  isOnline        Boolean      @default(false)
+  lastOnlineAt    DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -232,16 +244,73 @@ model Driver {
   driverLocations DriverLocation[]
   shipments       Shipment[]
   ratings         Rating[]
+  documents       DriverDocument[]
+  orderOffers     OrderOffer[]
+  rejections      DriverRejection[]
+  matchedTransportRequest TransportRequest? @relation("transportMatchedDriver")
+  trips           Trip[]
+  sgrLegs         SGRLeg[]
 
   @@map("drivers")
 }
 
+model DriverDocument {
+  id             String             @id @default(cuid())
+  driverId       String
+  type           DriverDocumentType
+  documentNumber String?
+  issueDate      DateTime?
+  expiryDate     DateTime?
+  fileUrl        String?
+  status         DocumentStatus     @default(PENDING_VERIFICATION)
+  verifiedById   String?
+  verifiedAt     DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  driver         Driver             @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+  @@map("driver_documents")
+}
+
 enum DriverStatus {
   AVAILABLE
+  ASSIGNED
+  ON_PICKUP
+  ON_DELIVERY
   ON_TRIP
   ON_BREAK
   OFFLINE
+  SUSPENDED
+  INACTIVE
   MAINTENANCE
+}
+
+// Distinct from operational `status` above — this is the onboarding/HR lifecycle a driver
+// moves through once, before they ever appear in dispatch at all.
+enum DriverApprovalStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  REJECTED
+  INACTIVE
+}
+
+enum DriverDocumentType {
+  LICENSE
+  IDENTIFICATION
+  MEDICAL
+  AUTHORIZATION
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING_VERIFICATION
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  REJECTED
 }
 
 model Carrier {
@@ -261,6 +330,7 @@ model Carrier {
   drivers     Driver[]
   vehicles    Vehicle[]
   shipments   Shipment[]
+  transportCapacities TransportCapacity[]
 
   @@map("carriers")
 }
@@ -281,7 +351,12 @@ model Vehicle {
   make           String?
   model          String?
   year           Int?
+  fuelType       String?
   status         VehicleStatus  @default(AVAILABLE)
+  insuranceExpiry     DateTime?
+  roadLicenseExpiry   DateTime?
+  inspectionExpiry    DateTime?
+  fitnessExpiry       DateTime?
   currentLatitude Float?
   currentLongitude Float?
   lastLocationAt DateTime?
@@ -293,8 +368,32 @@ model Vehicle {
   manifests      Manifest[]
   shipments      Shipment[]
   assignments    Assignment[]
+  maintenanceRecords VehicleMaintenanceRecord[]
+  trips          Trip[]
+  transportCapacities TransportCapacity[]
+  matchedTransportRequest TransportRequest? @relation("transportMatchedVehicle")
+  sgrLegs         SGRLeg[]
 
   @@map("vehicles")
+}
+
+model VehicleMaintenanceRecord {
+  id              String    @id @default(cuid())
+  vehicleId       String
+  serviceDate     DateTime
+  serviceType     String
+  mileage         Int?
+  cost            Decimal?  @db.Decimal(12, 2)
+  description     String?
+  nextServiceDate DateTime?
+  status          String    @default("COMPLETED") // SCHEDULED | IN_PROGRESS | COMPLETED
+  createdById     String?
+  createdAt       DateTime  @default(now())
+
+  vehicle         Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@index([vehicleId])
+  @@map("vehicle_maintenance_records")
 }
 
 enum VehicleType {
@@ -622,6 +721,11 @@ model Order {
   paymentStatus   PaymentStatus @default(PENDING)
   status          OrderStatus  @default(CREATED)
   notes           String?
+  // External partner order import (Part G) — never rely on XERIN's internal id alone for
+  // a partner-originated order; this is how a duplicate import attempt gets detected too.
+  partnerId       String?
+  externalOrderId String?
+  externalReference String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -629,11 +733,13 @@ model Order {
   customer        Customer?    @relation(fields: [customerId], references: [id])
   organization    Organization? @relation(fields: [organizationId], references: [id])
   quote           Quote?       @relation(fields: [quoteId], references: [id])
+  partner         Partner?     @relation("partnerOrders", fields: [partnerId], references: [id])
   shipments       Shipment[]
   payments        Payment[]
   invoices        Invoice[]
   paymentRequests PaymentRequest[]
 
+  @@unique([partnerId, externalOrderId])
   @@map("orders")
 }
 
@@ -733,6 +839,12 @@ model Shipment {
   // Vehicle category for road transport (BODA_BODA | VAN | TRUCK)
   vehicleCategory       String?
 
+  // Smart dispatch fields
+  dispatchMode          DispatchMode @default(DIRECT_ASSIGNMENT)
+  dispatchOfferRadius   Int?    // km radius for open order offers
+  dispatchAssignedAt    DateTime?
+  dispatchAcceptedAt    DateTime?
+
   // Warehouse / Fulfillment Center fields
   shelfBinLocation      String?
   consolidationBatchId  String?
@@ -743,7 +855,14 @@ model Shipment {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
+  // External partner shipment import (Part G/H) — a partner-originated shipment always
+  // carries the id it knows the transaction by, independent of our own tracking number.
+  partnerId        String?
+  externalShipmentId String?
+  externalReference String?
+
   order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  partner          Partner?         @relation("partnerShipments", fields: [partnerId], references: [id])
   createdBy        User             @relation("shipmentsCreatedBy", fields: [createdById], references: [id])
   customer         Customer?        @relation(fields: [customerId], references: [id])
   organization     Organization?    @relation(fields: [organizationId], references: [id])
@@ -774,11 +893,21 @@ model Shipment {
   exceptions       ShipmentException[]
   claims           Claim[]
   tickets          SupportTicket[]
+  orderOffers      OrderOffer[]
+  rejections       DriverRejection[]
+  transportRequest TransportRequest?
+  trips            Trip[]
+  settlements      Settlement[]
+  matchedCapacity  TransportCapacity? @relation("capacityMatchedShipment")
+  sgrLegs          SGRLeg[]
+  trainAllocations TrainAllocation[]
+  whatsappMessages WhatsAppMessage[]
 
   // Station fields
   stationId        String?
   receivedAtStationId String?
 
+  @@unique([partnerId, externalShipmentId])
   @@index([trackingNumber])
   @@index([status])
   @@map("shipments")
@@ -823,31 +952,44 @@ enum ShipmentStatus {
   PAYMENT_PENDING
   PAYMENT_CONFIRMED
   AWAITING_PICKUP
+  AWAITING_CARGO
   DRIVER_ASSIGNED
   ACCEPTED
   OUT_FOR_PICKUP
   PICKED_UP
   RECEIVED_AT_STATION
+  CARGO_RECEIVED
+  SCREENING
   VERIFIED_WEIGHED
+  READY_FOR_RAIL
+  TRAIN_ASSIGNED
+  MANIFESTED
   CONSOLIDATED
   READY_FOR_DISPATCH
+  LOADED
   LOADED_FOR_DISPATCH
+  TRAIN_DEPARTED
   IN_TRANSIT
   ONGOING
+  TRAIN_ARRIVED
   ARRIVED_DESTINATION
+  DESTINATION_STATION
   ARRIVED_COUNTRY
   CUSTOMS_REVIEW
   CUSTOMS_CLEARED
   READY_FOR_COLLECTION
+  LAST_MILE_ASSIGNED
   WAREHOUSE
   OUT_FOR_DELIVERY
   DELIVERED
+  COLLECTED
   DELIVERY_FAILED
   RETURNING
   RETURNED
   FAILED
   CANCELLED
   ON_HOLD
+  EXCEPTION
 }
 
 model ShipmentStatusHistory {
@@ -955,11 +1097,15 @@ model Assignment {
   acceptedAt   DateTime?
   completedAt  DateTime?
   notes        String?
+  capacityOverridden Boolean @default(false)
+  overrideReason String?
+  overrideById String?
 
   shipment     Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
   driver       Driver       @relation(fields: [driverId], references: [id])
   vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id])
   assignedBy   User         @relation("assignmentsAssignedBy", fields: [assignedById], references: [id])
+  trip         Trip?
 
   @@map("assignments")
 }
@@ -1005,6 +1151,8 @@ model Manifest {
   shipments       Shipment[]
   handovers       ManifestHandover[]
   station         Station?     @relation("stationManifests", fields: [stationId], references: [id])
+  trainAllocations TrainAllocation[]
+  sgrLegs         SGRLeg[]     @relation("sgrLegManifest")
 
   // Station reference for SGR manifests
   stationId       String?
@@ -1535,6 +1683,12 @@ model Station {
   manifests     Manifest[]   @relation("stationManifests")
   inventory     StationInventory[]
   exceptions    ShipmentException[]
+  sgrLegOrigins  SGRLeg[]    @relation("sgrLegOrigin")
+  sgrLegDestinations SGRLeg[] @relation("sgrLegDest")
+  trainAllocLoading  TrainAllocation[] @relation("trainAllocLoading")
+  trainAllocReceiving TrainAllocation[] @relation("trainAllocReceiving")
+  sgrPricingOrigins  SGRPricing[] @relation("sgrPricingOrigin")
+  sgrPricingDestinations SGRPricing[] @relation("sgrPricingDest")
 
   @@map("stations")
 }
@@ -1603,6 +1757,15 @@ enum ExceptionType {
   PAYMENT_PENDING
   CUSTOMS_HOLD
   TRAIN_DELAY
+  TRAIN_CANCELLATION
+  CARGO_DAMAGE
+  PACKAGE_MISSING
+  WEIGHT_DISCREPANCY
+  SCREENING_ISSUE
+  CAPACITY_FULL
+  WRONG_STATION
+  LAST_MILE_FAILURE
+  CARGO_HELD
   FLIGHT_DELAY
   DELIVERY_FAILED
   PACKAGE_DISCREPANCY
@@ -1771,6 +1934,262 @@ model NotificationLog {
 }
 
 // ============================================================
+// WHATSAPP ENGINE — persistent session-based messaging
+// ============================================================
+
+enum WhatsAppConnectionStatus {
+  QR_REQUIRED
+  CONNECTING
+  CONNECTED
+  RECONNECTING
+  DISCONNECTED
+  SESSION_EXPIRED
+  ERROR
+  DISABLED
+}
+
+model WhatsAppConnection {
+  id              String   @id @default(cuid())
+  name            String   // "XERIN Customer Care", "XERIN Sales"
+  provider        String   @default("baileys") // baileys, official, etc.
+  purpose         String?  // customer_care, sales, operations, marketing
+
+  // Account identifier (WhatsApp phone number once connected)
+  accountId       String?  // e.g. "255700000000"
+  accountName     String?
+
+  // Session state
+  status          WhatsAppConnectionStatus @default(QR_REQUIRED)
+  sessionData     String?  // Encrypted session credentials (JSON)
+  qrCode          String?  // Current QR code (transient, cleared on connect)
+
+  // Connection tracking
+  lastConnectedAt DateTime?
+  lastSeenAt      DateTime?
+  lastMessageAt   DateTime?
+  lastHeartbeatAt DateTime?
+
+  // Message statistics
+  messagesSent    Int      @default(0)
+  messagesDelivered Int   @default(0)
+  messagesFailed  Int      @default(0)
+  messagesQueued  Int      @default(0)
+
+  // Error tracking
+  lastError       String?
+  lastErrorAt     DateTime?
+
+  // Configuration
+  autoReconnect   Boolean  @default(true)
+  isActive        Boolean  @default(true)
+
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  messages        WhatsAppMessage[]
+  campaigns       WhatsAppCampaign[]
+
+  @@index([status])
+  @@index([accountId])
+  @@map("whatsapp_connections")
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+model WhatsAppMessage {
+  id              String   @id @default(cuid())
+  connectionId    String
+  recipient       String   // Phone number
+  recipientName   String?
+
+  // Content
+  messageBody     String   // Rendered message text
+  templateId      String?  // Template used
+  templateName    String?
+
+  // Event tracking
+  eventType       String?  // e.g. "BOOKING_CREATED", "SGR_TRAIN_DEPARTED"
+  shipmentId      String?  // Related shipment
+  metadata        Json?    // Additional context
+
+  // Provider tracking
+  providerMessageId String? // WhatsApp message ID from provider
+
+  // Status
+  status          WhatsAppMessageStatus @default(QUEUED)
+  errorCode       String?
+  errorMessage    String?
+
+  // Retry tracking
+  retryCount      Int      @default(0)
+  maxRetries      Int      @default(3)
+  nextRetryAt     DateTime?
+
+  // Timestamps
+  queuedAt        DateTime @default(now())
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  failedAt       DateTime?
+
+  // SMS fallback
+  smsFallbackSent Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  connection      WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  template        WhatsAppTemplate?  @relation(fields: [templateId], references: [id])
+  shipment        Shipment?          @relation(fields: [shipmentId], references: [id])
+
+  @@index([connectionId, status])
+  @@index([recipient])
+  @@index([shipmentId])
+  @@index([status, nextRetryAt])
+  @@map("whatsapp_messages")
+}
+
+model WhatsAppTemplate {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  eventType       String?  // Associated XERIN event type
+  language        String   @default("en")
+
+  // Template content
+  subject         String?
+  body            String   // Template with {{variables}}
+  variables       String[] @default([]) // ["customer_name", "tracking_number"]
+
+  // Configuration
+  category        String   @default("TRANSACTIONAL") // TRANSACTIONAL, MARKETING, OTP
+  isActive        Boolean  @default(true)
+
+  // SMS fallback
+  smsBody         String?  // Shorter version for SMS fallback
+
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  messages        WhatsAppMessage[]
+  campaigns       WhatsAppCampaign[]
+
+  @@index([eventType])
+  @@index([category])
+  @@map("whatsapp_templates")
+}
+
+enum WhatsAppCampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model WhatsAppCampaign {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  connectionId    String
+  templateId      String
+
+  // Audience
+  audienceType    String   @default("ALL_CUSTOMERS") // ALL_CUSTOMERS, FILTERED, UPLOAD
+  audienceFilter Json?    // Filter criteria
+  recipientCount  Int      @default(0)
+
+  // Scheduling
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  // Status
+  status          WhatsAppCampaignStatus @default(DRAFT)
+
+  // Rate limiting
+  sendRate        Int      @default(10) // messages per minute
+  dailyLimit      Int?     // max messages per day
+
+  // Analytics
+  totalSent       Int      @default(0)
+  totalDelivered  Int      @default(0)
+  totalFailed     Int      @default(0)
+  totalRead       Int      @default(0)
+
+  // Consent
+  optOutEnabled   Boolean  @default(true)
+
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  connection      WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  template        WhatsAppTemplate   @relation(fields: [templateId], references: [id])
+  recipients      WhatsAppCampaignRecipient[]
+
+  @@index([status])
+  @@map("whatsapp_campaigns")
+}
+
+model WhatsAppCampaignRecipient {
+  id              String   @id @default(cuid())
+  campaignId      String
+  recipient       String   // Phone number
+  recipientName   String?
+  userId          String?  // XERIN user ID if known
+
+  // Message tracking
+  messageId       String?  // WhatsAppMessage ID
+  status          WhatsAppMessageStatus @default(QUEUED)
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  failedAt        DateTime?
+  errorMessage    String?
+
+  // Consent
+  optedOut        Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign        WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, recipient])
+  @@index([campaignId, status])
+  @@map("whatsapp_campaign_recipients")
+}
+
+model WhatsAppOTP {
+  id              String   @id @default(cuid())
+  phone           String
+  otpHash         String   // Hashed OTP (never store plaintext)
+  purpose         String   @default("LOGIN") // LOGIN, REGISTRATION, VERIFICATION
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(5)
+  expiresAt       DateTime
+  resendAvailableAt DateTime?
+  verifiedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([phone, purpose])
+  @@index([expiresAt])
+  @@map("whatsapp_otps")
+}
+
+// ============================================================
 // TRAIN / CAPACITY MANAGEMENT (SGR - spec section 11)
 // ============================================================
 
@@ -1789,5 +2208,655 @@ model TrainCapacity {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  allocations     TrainAllocation[]
+  sgrLegs         SGRLeg[]
+
   @@map("train_capacities")
 }
+
+// ============================================================
+// SGR TRAIN ALLOCATION — links shipments to trains with capacity tracking
+// ============================================================
+
+model TrainAllocation {
+  id              String   @id @default(cuid())
+  trainCapacityId String
+  shipmentId      String
+  manifestId      String?
+
+  // Allocation details
+  allocatedWeightKg Decimal  @db.Decimal(10, 2)
+  packageCount    Int      @default(1)
+
+  // Loading tracking
+  loadedAt        DateTime?
+  loadedById      String?
+  loadingStationId String?
+
+  // Arrival tracking
+  arrivedAt       DateTime?
+  unloadedById    String?
+  receivingStationId String?
+
+  // Status
+  status          String   @default("ALLOCATED") // ALLOCATED, LOADED, IN_TRANSIT, ARRIVED, UNLOADED
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  trainCapacity   TrainCapacity  @relation(fields: [trainCapacityId], references: [id], onDelete: Cascade)
+  shipment        Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  manifest        Manifest?      @relation(fields: [manifestId], references: [id])
+  loadingStation  Station?       @relation("trainAllocLoading", fields: [loadingStationId], references: [id])
+  receivingStation Station?      @relation("trainAllocReceiving", fields: [receivingStationId], references: [id])
+
+  @@unique([trainCapacityId, shipmentId])
+  @@index([trainCapacityId])
+  @@index([shipmentId])
+  @@map("train_allocations")
+}
+
+// ============================================================
+// SGR MULTI-LEG TRACKING — one shipment, multiple transport legs
+// ============================================================
+
+enum SGRLegType {
+  FIRST_MILE    // Door → Station (road)
+  RAIL          // Station → Station (SGR train)
+  LAST_MILE     // Station → Door (road)
+}
+
+enum SGRLegStatus {
+  PENDING
+  DRIVER_ASSIGNED
+  IN_PROGRESS
+  AT_STATION
+  LOADED_ON_TRAIN
+  IN_TRANSIT
+  ARRIVED_STATION
+  COMPLETED
+  CANCELLED
+  EXCEPTION
+}
+
+model SGRLeg {
+  id              String       @id @default(cuid())
+  shipmentId      String
+  legNumber       Int          // 1, 2, 3
+  legType         SGRLegType   // FIRST_MILE, RAIL, LAST_MILE
+
+  // Leg-specific transport details
+  originLabel     String       // "Customer Address" or "Mwanza Station"
+  destLabel       String       // "Mwanza Station" or "Customer Address"
+  originStationId String?
+  destStationId   String?
+
+  // First/Last mile driver assignment
+  driverId        String?
+  vehicleId       String?
+  tripId          String?      // links to Trip in trip engine
+  transportRequestId String?   // links to TransportRequest
+
+  // Rail leg details
+  trainCapacityId String?
+  manifestId      String?
+  trainNumber     String?
+
+  // Status
+  status          SGRLegStatus @default(PENDING)
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  // Tracking
+  notes           String?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  shipment        Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  originStation   Station?       @relation("sgrLegOrigin", fields: [originStationId], references: [id])
+  destStation     Station?       @relation("sgrLegDest", fields: [destStationId], references: [id])
+  driver          Driver?        @relation(fields: [driverId], references: [id])
+  vehicle         Vehicle?       @relation(fields: [vehicleId], references: [id])
+  trip            Trip?          @relation(fields: [tripId], references: [id])
+  trainCapacity   TrainCapacity? @relation(fields: [trainCapacityId], references: [id])
+  manifest        Manifest?      @relation("sgrLegManifest", fields: [manifestId], references: [id])
+
+  @@index([shipmentId])
+  @@index([legType, status])
+  @@map("sgr_legs")
+}
+
+// ============================================================
+// SGR PRICING — configurable per station pair, weight band, service type
+// ============================================================
+
+model SGRPricing {
+  id              String   @id @default(cuid())
+  originStationId String
+  destStationId   String
+  serviceType     String   // STATION_TO_STATION, DOOR_TO_STATION, STATION_TO_DOOR, DOOR_TO_DOOR
+
+  // Weight-based pricing
+  minWeightKg     Decimal  @db.Decimal(8, 2)
+  maxWeightKg     Decimal  @db.Decimal(8, 2)
+  basePrice       Decimal  @db.Decimal(12, 2)
+  perKgPrice     Decimal  @db.Decimal(12, 2) @default(0)
+
+  // Additional charges
+  firstMilePrice  Decimal? @db.Decimal(12, 2)
+  lastMilePrice   Decimal? @db.Decimal(12, 2)
+  handlingFee     Decimal? @db.Decimal(12, 2)
+  insuranceRate   Decimal? @db.Decimal(5, 4) // percentage of declared value
+  specialHandlingFee Decimal? @db.Decimal(12, 2)
+
+  // Settlement split
+  driverSettlementRate Decimal? @db.Decimal(5, 4) // percentage for first/last mile driver
+  xerinMarginRate      Decimal? @db.Decimal(5, 4) // XERIN's margin percentage
+
+  currency        String   @default("TZS")
+  isActive        Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  originStation   Station  @relation("sgrPricingOrigin", fields: [originStationId], references: [id])
+  destStation     Station  @relation("sgrPricingDest", fields: [destStationId], references: [id])
+
+  @@unique([originStationId, destStationId, serviceType, minWeightKg, maxWeightKg])
+  @@map("sgr_pricing")
+}
+
+// ============================================================
+// PARTNER INTEGRATION PLATFORM
+// ============================================================
+
+enum PartnerStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+  ERROR
+}
+
+enum PartnerAuthMethod {
+  NONE
+  API_KEY
+  BEARER
+  BASIC
+  OAUTH2
+  CUSTOM
+}
+
+model Partner {
+  id                String   @id @default(cuid())
+  name              String
+  slug              String   @unique
+  company           String?
+  contactEmail      String?
+  contactPhone      String?
+  status            PartnerStatus @default(PENDING)
+
+  apiBaseUrl        String?
+  authMethod        PartnerAuthMethod @default(NONE)
+  // All outbound-auth secrets (api key, bearer token, basic creds, oauth client secret,
+  // custom header value) live here as ONE encrypted JSON blob — never as separate plaintext
+  // columns. Decrypted only in-memory, only by the webhook dispatcher / outbound API client,
+  // never returned by any API response (see toSafePartner() in the controller).
+  authConfigEncrypted String?
+
+  webhookUrl        String?
+  webhookSecretEncrypted String?
+  subscribedEvents  String[] @default([])
+  scopes            String[] @default([])
+
+  // Rolling health/activity signals, recomputed after every integration log write.
+  health            String   @default("DISABLED") // HEALTHY | WARNING | DEGRADED | FAILING | DISABLED
+  lastSuccessAt     DateTime?
+  lastFailureAt     DateTime?
+
+  notes             String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastActivityAt    DateTime?
+
+  apiKeys           PartnerApiKey[]
+  webhookDeliveries WebhookDelivery[]
+  integrationLogs   IntegrationLog[]
+  inboundEvents     InboundWebhookEvent[]
+  orders            Order[]  @relation("partnerOrders")
+  shipments         Shipment[] @relation("partnerShipments")
+  trips             Trip[]
+  transportCapacities TransportCapacity[]
+
+  @@map("partners")
+}
+
+model PartnerApiKey {
+  id            String   @id @default(cuid())
+  partnerId     String
+  label         String?
+  keyPrefix     String   // shown in UI, e.g. "xk_live_ab12cd"
+  keyHash       String   @unique // sha256 of the full key — the plaintext key is shown exactly once, at creation
+  scopes        String[] @default([])
+  environment   String   @default("live") // live | test
+  status        String   @default("ACTIVE") // ACTIVE | REVOKED | EXPIRED
+  lastUsedAt    DateTime?
+  expiresAt     DateTime?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  revokedAt     DateTime?
+
+  partner       Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@map("partner_api_keys")
+}
+
+model WebhookDelivery {
+  id              String   @id @default(cuid())
+  eventId         String   @unique // the event_id exposed to the partner in the payload
+  partnerId       String
+  event           String
+  endpoint        String
+  payload         Json
+  attempt         Int      @default(0)
+  maxAttempts     Int      @default(5)
+  status          String   @default("PENDING") // PENDING | SENT | DELIVERED | RETRYING | FAILED | DISABLED
+  httpStatus      Int?
+  responseTimeMs  Int?
+  responsePreview String?
+  lastError       String?
+  nextRetryAt     DateTime?
+  isTest          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  deliveredAt     DateTime?
+
+  partner         Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+  @@index([partnerId, createdAt])
+  @@map("webhook_deliveries")
+}
+
+model IntegrationLog {
+  id          String   @id @default(cuid())
+  partnerId   String?
+  direction   String   // INBOUND | OUTBOUND
+  event       String?
+  endpoint    String?
+  requestId   String?
+  httpStatus  Int?
+  latencyMs   Int?
+  result      String   // SUCCESS | FAILURE | REJECTED
+  message     String?
+  createdAt   DateTime @default(now())
+
+  partner     Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId, createdAt])
+  @@map("integration_logs")
+}
+
+// Idempotency ledger for inbound partner webhooks: (partnerId, externalEventId) is unique,
+// so a partner retrying the same delivery can never create a duplicate shipment/order/event.
+model InboundWebhookEvent {
+  id               String   @id @default(cuid())
+  partnerId        String
+  externalEventId  String
+  event            String
+  payload          Json
+  status           String   @default("PROCESSED") // PROCESSED | REJECTED
+  createdAt        DateTime @default(now())
+
+  partner          Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, externalEventId])
+  @@map("inbound_webhook_events")
+}
+
+// ============================================================
+// SMART DISPATCH ENGINE
+// ============================================================
+
+enum DispatchMode {
+  DIRECT_ASSIGNMENT
+  OPEN_ORDER
+  AUTO_ASSIGNMENT
+  PARTNER_ASSIGNMENT
+}
+
+enum OrderOfferStatus {
+  PENDING      // offered to driver, awaiting response
+  ACCEPTED     // driver accepted
+  REJECTED    // driver rejected
+  EXPIRED     // offer timed out
+  CANCELLED   // dispatcher cancelled offer
+  SUPERSEDED  // another driver won the order
+}
+
+model OrderOffer {
+  id              String           @id @default(cuid())
+  shipmentId      String
+  driverId        String
+  status          OrderOfferStatus @default(PENDING)
+  offerRadius     Int              // km radius at which offer was made
+  offerExpiresAt  DateTime         // when this offer times out
+  estimatedEarnings Decimal?       @db.Decimal(12, 2)
+  estimatedDistanceKm Float?
+  estimatedDurationMin Int?
+  eligibilityScore Float?
+  rankLabel       String?          // BEST_MATCH | GOOD_MATCH | AVAILABLE
+  rejectionReason String?
+  acceptedAt      DateTime?
+  rejectedAt      DateTime?
+  expiredAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  shipment        Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  driver          Driver           @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, status])
+  @@index([shipmentId, status])
+  @@map("order_offers")
+}
+
+enum RejectionReasonType {
+  TOO_FAR
+  VEHICLE_UNSUITABLE
+  UNAVAILABLE
+  ROUTE_ISSUE
+  CARGO_UNSUITABLE
+  PERSONAL_REASON
+  OTHER
+}
+
+model DriverRejection {
+  id          String             @id @default(cuid())
+  shipmentId  String
+  driverId    String
+  reason      RejectionReasonType
+  notes       String?
+  createdAt   DateTime           @default(now())
+
+  shipment    Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  driver      Driver             @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, createdAt])
+  @@index([shipmentId])
+  @@map("driver_rejections")
+}
+
+// ============================================================
+// TRANSPORT MARKETPLACE — Transport Requests, Trips, Legs,
+// Partner Capacity, Settlements, Trip Exceptions
+// ============================================================
+
+enum TransportRequestStatus {
+  PENDING          // just calculated, waiting for dispatch decision
+  OPEN_MARKETPLACE  // published to driver marketplace
+  DIRECT_ASSIGNING  // dispatcher selecting driver manually
+  AUTO_ASSIGNING    // system auto-assigning
+  ASSIGNED           // driver/vehicle assigned → trip created
+  EXPIRED           // no driver found, timed out
+  CANCELLED         // dispatcher cancelled
+}
+
+model TransportRequest {
+  id                String                 @id @default(cuid())
+  shipmentId        String                 @unique
+  status            TransportRequestStatus @default(PENDING)
+
+  // Calculated transport requirement
+  requiredVehicleType  VehicleType?        // MOTORCYCLE, VAN, TRUCK, etc.
+  requiredCapacityKg   Decimal?            @db.Decimal(8, 2)
+  requiredVolumeM3      Decimal?            @db.Decimal(8, 2)
+  cargoType             String?            // GENERAL, PERISHABLE, FRAGILE, DANGEROUS, etc.
+  serviceLevel          ServiceLevel?      // STANDARD, EXPRESS, SAME_DAY, etc.
+  transportMode         TransportMode?     // ROAD, AIR, SEA, RAIL, COURIER
+  specialHandling       String[]           @default([])
+  pickupWindow          DateTime?
+  deliveryDeadline      DateTime?
+  estimatedDistanceKm   Float?
+  estimatedDurationMin  Int?
+
+  // Dispatch mode chosen for this request
+  dispatchMode          DispatchMode        @default(DIRECT_ASSIGNMENT)
+  offerRadiusKm         Int?
+
+  // Pricing snapshot at time of request
+  customerPrice         Decimal?            @db.Decimal(12, 2)
+  providerSettlement    Decimal?            @db.Decimal(12, 2)
+  xerinMargin           Decimal?            @db.Decimal(12, 2)
+  currency              String              @default("TZS")
+
+  // Matching
+  matchedDriverId       String? @unique
+  matchedVehicleId      String? @unique
+  matchedCapacityId     String?  @unique       // TransportCapacity match if partner capacity
+  matchScore            Float?
+  matchReasons          String[]            @default([])
+
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  shipment              Shipment            @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  matchedDriver         Driver?              @relation("transportMatchedDriver", fields: [matchedDriverId], references: [id])
+  matchedVehicle        Vehicle?             @relation("transportMatchedVehicle", fields: [matchedVehicleId], references: [id])
+  matchedCapacity       TransportCapacity?   @relation(fields: [matchedCapacityId], references: [id])
+  trips                 Trip[]
+
+  @@index([status])
+  @@map("transport_requests")
+}
+
+enum TripStatus {
+  CREATED             // trip record created, awaiting driver acceptance
+  ASSIGNED            // driver assigned, not yet accepted
+  ACCEPTED            // driver accepted the trip
+  ARRIVED_PICKUP      // driver arrived at pickup location
+  CARGO_VERIFIED      // cargo verified at pickup
+  PICKED_UP           // cargo picked up, trip starting
+  IN_TRANSIT          // en route to destination
+  ARRIVED_DESTINATION // arrived at delivery point
+  DELIVERED           // cargo delivered, awaiting POD
+  POD_COMPLETE        // proof of delivery captured
+  COMPLETED           // trip fully completed + settlement processed
+  EXCEPTION           // exception raised during trip
+  CANCELLED           // trip cancelled
+  REASSIGNED          // trip reassigned to another driver
+}
+
+model Trip {
+  id              String       @id @default(cuid())
+  tripNumber      String       @unique
+  shipmentId      String
+  transportRequestId String?
+  assignmentId    String?  @unique // links to Assignment for backward compat
+  legNumber       Int          @default(1)  // 1-based leg number for multi-leg
+  legLabel        String?      // "Leg 1: Mwanza → Dodoma"
+
+  driverId        String
+  vehicleId       String?
+  partnerId       String?      // if assigned via partner capacity
+
+  status          TripStatus   @default(CREATED)
+  dispatchMode    DispatchMode @default(DIRECT_ASSIGNMENT)
+
+  // Trip timing
+  assignedAt      DateTime?    @default(now())
+  acceptedAt      DateTime?
+  arrivedPickupAt DateTime?
+  cargoVerifiedAt DateTime?
+  pickedUpAt      DateTime?
+  inTransitAt     DateTime?
+  arrivedDestAt   DateTime?
+  deliveredAt     DateTime?
+  podCapturedAt   DateTime?
+  completedAt     DateTime?
+
+  // POD
+  podImageUrl    String?
+  podSignatureUrl String?
+  podNotes        String?
+  podCapturedById String?
+
+  // Settlement
+  settlementId    String?
+  settlement      Settlement?
+
+  // Exception
+  exceptionReason String?
+  exceptionType   String?
+
+  // Route info
+  originLat       Float?
+  originLng       Float?
+  destLat         Float?
+  destLng         Float?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  shipment        Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  transportRequest TransportRequest? @relation(fields: [transportRequestId], references: [id])
+  assignment      Assignment?        @relation(fields: [assignmentId], references: [id])
+  driver          Driver             @relation(fields: [driverId], references: [id])
+  vehicle         Vehicle?           @relation(fields: [vehicleId], references: [id])
+  partner         Partner?           @relation(fields: [partnerId], references: [id])
+  exceptions      TripException[]
+  sgrLegs         SGRLeg[]
+
+  @@index([shipmentId])
+  @@index([driverId, status])
+  @@index([status])
+  @@map("trips")
+}
+
+model TripException {
+  id            String   @id @default(cuid())
+  tripId        String
+  type          String   // VEHICLE_BREAKDOWN, CUSTOMER_UNAVAILABLE, WRONG_ADDRESS, CARGO_ISSUE, ROUTE_PROBLEM, ACCIDENT, DELIVERY_DELAY, OTHER
+  reason        String
+  description   String?
+  location      String?
+  latitude      Float?
+  longitude     Float?
+  reportedById  String
+  reportedAt    DateTime @default(now())
+
+  // Resolution
+  status        String   @default("OPEN") // OPEN, IN_REVIEW, RESOLVED, ESCALATED
+  resolution    String?  // RETRY, REASSIGN, RESCHEDULE, RETURN_CARGO, CANCEL
+  resolvedById  String?
+  resolvedAt    DateTime?
+  resolutionNotes String?
+
+  trip          Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@index([status])
+  @@map("trip_exceptions")
+}
+
+enum CapacityStatus {
+  AVAILABLE     // published and open for matching
+  MATCHED        // matched to a shipment, pending confirmation
+  BOOKED         // confirmed booking
+  EXPIRED       // availability window passed
+  CANCELLED     // partner cancelled
+}
+
+model TransportCapacity {
+  id              String        @id @default(cuid())
+  partnerId       String?
+  carrierId       String?
+  vehicleId       String?
+
+  // Capacity details
+  vehicleType     VehicleType
+  capacityKg      Decimal       @db.Decimal(8, 2)
+  volumeM3        Decimal?      @db.Decimal(8, 2)
+  registrationNo  String?
+
+  // Route
+  originCity      String
+  originCountry   String        @default("Tanzania")
+  destCity        String
+  destCountry     String        @default("Tanzania")
+  routeLabel      String?       // "Mwanza → Dar es Salaam"
+
+  // Availability window
+  availableFrom   DateTime
+  availableTo    DateTime
+
+  // Pricing
+  askingPrice     Decimal?      @db.Decimal(12, 2)
+  currency        String        @default("TZS")
+  pricePerKg      Boolean       @default(false)  // if true, askingPrice is per kg
+
+  // Matching
+  status          CapacityStatus @default(AVAILABLE)
+  matchedShipmentId String?  @unique
+  matchedAt       DateTime?
+
+  // Metadata
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  partner         Partner?          @relation(fields: [partnerId], references: [id])
+  carrier         Carrier?          @relation(fields: [carrierId], references: [id])
+  vehicle         Vehicle?          @relation(fields: [vehicleId], references: [id])
+  matchedShipment Shipment?         @relation("capacityMatchedShipment", fields: [matchedShipmentId], references: [id])
+  transportRequest TransportRequest?
+
+  @@index([status])
+  @@index([originCity, destCity])
+  @@map("transport_capacities")
+}
+
+enum SettlementStatus {
+  PENDING         // trip completed, settlement not yet processed
+  PROCESSING      // settlement being calculated
+  APPROVED        // settlement approved
+  PAID            // settlement paid to provider
+  DISPUTED        // settlement under dispute
+  ADJUSTED        // settlement amount adjusted
+}
+
+model Settlement {
+  id              String           @id @default(cuid())
+  tripId          String           @unique
+  shipmentId      String
+
+  // Financial breakdown
+  customerPrice   Decimal          @db.Decimal(12, 2)
+  providerSettlement Decimal       @db.Decimal(12, 2)
+  xerinMargin     Decimal          @db.Decimal(12, 2)
+  currency        String           @default("TZS")
+
+  // Adjustments
+  adjustments     Decimal          @default(0) @db.Decimal(12, 2)
+  adjustmentReason String?
+
+  // Status
+  status          SettlementStatus @default(PENDING)
+  approvedById    String?
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  paymentRef      String?
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  trip            Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  // tripId is @unique on Settlement side, defining the one-to-one relation
+  shipment        Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("settlements")
+}
+

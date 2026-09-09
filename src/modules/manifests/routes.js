@@ -16,6 +16,11 @@ const router = Router()
 
 router.use(authenticate)
 
+// Staff/dispatch-only — no driver- or customer-facing client calls this module; matches
+// the write-path audience already enforced below. Previously had no role check at all,
+// exposing driver name/phone and full shipment addresses to any authenticated user.
+const MANIFEST_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]
+
 /**
  * @swagger
  * /api/v1/manifests:
@@ -29,7 +34,7 @@ router.use(authenticate)
  *       200:
  *         description: List of manifests
  */
-router.get("/", listManifests)
+router.get("/", authorizeRoles(...MANIFEST_STAFF), listManifests)
 
 /**
  * @swagger
@@ -51,7 +56,7 @@ router.get("/", listManifests)
  *       404:
  *         description: Manifest not found
  */
-router.get("/:id", getManifest)
+router.get("/:id", authorizeRoles(...MANIFEST_STAFF), getManifest)
 
 /**
  * @swagger
@@ -73,7 +78,7 @@ router.get("/:id", getManifest)
  *       404:
  *         description: Invalid QR code
  */
-router.get("/qr/:qrCode", getManifestByQR)
+router.get("/qr/:qrCode", authorizeRoles(...MANIFEST_STAFF), getManifestByQR)
 
 /**
  * @swagger

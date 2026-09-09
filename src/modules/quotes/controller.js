@@ -95,6 +95,13 @@ export async function getQuote(req, res, next) {
       include: { order: true },
     })
     if (!quote) return res.status(404).json({ success: false, message: "Quote not found" })
+
+    // listQuotes already scopes by createdById for CUSTOMER; this single-record fetch
+    // didn't, letting any customer view another customer's saved quote + linked order.
+    if (req.user.role === "CUSTOMER" && quote.createdById !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Quote not found" })
+    }
+
     res.json({ success: true, data: quote })
   } catch (err) { next(err) }
 }
@@ -170,6 +177,15 @@ export async function customerRespondToQuote(req, res, next) {
   try {
     const { id } = req.params
     const data = customerRespondSchema.parse(req.body)
+
+    const existing = await prisma.quoteRequest.findUnique({ where: { id } })
+    if (!existing) return res.status(404).json({ success: false, message: "Quote request not found" })
+
+    // No ownership check meant any authenticated user could accept/reject another
+    // customer's quote request by guessing its id.
+    if (req.user.role === "CUSTOMER" && existing.createdById !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Quote request not found" })
+    }
 
     const statusMap = {
       ACCEPT: "ACCEPTED",

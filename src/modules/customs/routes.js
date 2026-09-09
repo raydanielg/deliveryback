@@ -26,7 +26,11 @@ router.use(authenticate)
  *       404:
  *         description: No customs declaration found for this shipment
  */
-router.get("/:shipmentId", getCustomsDeclaration)
+// Staff-only — the admin dashboard's international-shipments view is the only caller
+// (no customer-app usage of this module); previously had no role check at all and
+// exposed declared value/HS code/documents for any shipment by id.
+const CUSTOMS_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER"]
+router.get("/:shipmentId", authorizeRoles(...CUSTOMS_STAFF), getCustomsDeclaration)
 
 /**
  * @swagger
@@ -52,7 +56,9 @@ router.get("/:shipmentId", getCustomsDeclaration)
  *       201:
  *         description: Customs declaration created
  */
-router.post("/", createCustomsDeclaration)
+// Write path was missing a role gate entirely — any authenticated customer could create
+// a customs declaration for any shipment and force its status to CUSTOMS_REVIEW.
+router.post("/", authorizeRoles(...CUSTOMS_STAFF), createCustomsDeclaration)
 
 /**
  * @swagger

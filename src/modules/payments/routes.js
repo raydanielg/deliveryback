@@ -45,7 +45,11 @@ router.get("/", listPayments)
  *       201:
  *         description: Payment created
  */
-router.post("/", createPayment)
+// Staff-only — this records a payment as already PAID directly (used for manual/offline
+// reconciliation, e.g. cash collected by a driver). It was previously reachable by any
+// authenticated user with no role check, meaning a customer could mark ANY order — not
+// even their own — as paid and activate its shipment without ever paying.
+router.post("/", authorizeRoles("SUPER_ADMIN", "FINANCE"), createPayment)
 
 /**
  * @swagger

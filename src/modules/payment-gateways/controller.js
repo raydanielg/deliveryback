@@ -1,6 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { createPaymentGatewaySchema, initiatePaymentSchema } from "./validation.js"
 import { createNotification } from "../notifications/controller.js"
+import { emitEvent, EVENTS } from "../integrations/event-bus.js"
 import crypto from "crypto"
 
 // --- Payment Gateway CRUD ---
@@ -470,6 +471,7 @@ function verifyAzampesaWebhookSignature(req, secretKey) {
 
 // --- Shared: apply a confirmed payment atomically to its payment request + order + shipments ---
 async function applyConfirmedPayment(paymentRequest, { transactionId, method, metadata }) {
+  let confirmedOrder = null
   await prisma.$transaction(async (tx) => {
     await tx.paymentRequest.update({
       where: { id: paymentRequest.id },
@@ -480,6 +482,7 @@ async function applyConfirmedPayment(paymentRequest, { transactionId, method, me
 
     const order = await tx.order.findUnique({ where: { id: paymentRequest.orderId } })
     if (!order) return
+    confirmedOrder = order
 
     await tx.payment.create({
       data: {
@@ -531,6 +534,32 @@ async function applyConfirmedPayment(paymentRequest, { transactionId, method, me
       console.warn("Payment gateway notification failed:", notifErr.message)
     }
   }
+
+  if (confirmedOrder) {
+    await emitEvent(EVENTS.PAYMENT_SUCCESS, {
+      order_id: confirmedOrder.id,
+      order_number: confirmedOrder.orderNumber,
+      amount: Number(paymentRequest.paymentAmount),
+      currency: paymentRequest.currencyCode,
+    }, confirmedOrder.partnerId ? { partnerId: confirmedOrder.partnerId } : {})
+  }
+}
+
+async function emitPaymentFailedEvent(paymentRequest) {
+  let partnerId
+  if (paymentRequest.orderId) {
+    const order = await prisma.order.findUnique({ where: { id: paymentRequest.orderId }, select: { id: true, orderNumber: true, partnerId: true } })
+    if (order) {
+      await emitEvent(EVENTS.PAYMENT_FAILED, {
+        order_id: order.id,
+        order_number: order.orderNumber,
+        amount: Number(paymentRequest.paymentAmount),
+        currency: paymentRequest.currencyCode,
+      }, order.partnerId ? { partnerId: order.partnerId } : {})
+      return
+    }
+  }
+  await emitEvent(EVENTS.PAYMENT_FAILED, { payment_request_id: paymentRequest.id, amount: Number(paymentRequest.paymentAmount), currency: paymentRequest.currencyCode })
 }
 
 // --- Payment Webhook/Callback Handlers ---
@@ -602,6 +631,7 @@ export async function selcomWebhook(req, res, next) {
         where: { id: paymentRequest.id },
         data: { status: "FAILED", additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
       })
+      await emitPaymentFailedEvent(paymentRequest)
     }
 
     res.json({ success: true, message: "Webhook processed" })
@@ -674,6 +704,7 @@ export async function azampesaCallback(req, res, next) {
         where: { id: paymentRequest.id },
         data: { status: "FAILED", additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
       })
+      await emitPaymentFailedEvent(paymentRequest)
     }
 
     res.json({ success: true, message: "Callback processed" })

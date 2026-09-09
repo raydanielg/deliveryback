@@ -10,9 +10,13 @@ const router = Router()
 
 router.use(authenticate)
 
-router.get("/", listExceptions)
-router.get("/stats", getExceptionStats)
-router.get("/:id", getException)
+// Reads previously had no role check at all, exposing sender/recipient name+phone+city
+// for every shipment exception system-wide to any authenticated CUSTOMER. Match the
+// write-path audience (staff + DRIVER) already enforced below.
+const EXCEPTIONS_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "DRIVER"]
+router.get("/", authorizeRoles(...EXCEPTIONS_STAFF), listExceptions)
+router.get("/stats", authorizeRoles(...EXCEPTIONS_STAFF), getExceptionStats)
+router.get("/:id", authorizeRoles(...EXCEPTIONS_STAFF), getException)
 
 router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "DRIVER"), createException)
 router.post("/return", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "DRIVER"), createReturn)

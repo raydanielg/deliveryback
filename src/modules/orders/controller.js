@@ -61,6 +61,14 @@ export async function getOrder(req, res, next) {
       },
     })
     if (!order) return res.status(404).json({ success: false, message: "Order not found" })
+
+    // Previously unscoped — any authenticated customer could fetch any order by guessing/
+    // incrementing its ID and see the full record: other customers' shipments, addresses,
+    // payments, and invoices. listOrders already scoped by createdById; this didn't.
+    if (req.user.role === "CUSTOMER" && order.createdById !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Order not found" })
+    }
+
     res.json({ success: true, data: order })
   } catch (err) { next(err) }
 }

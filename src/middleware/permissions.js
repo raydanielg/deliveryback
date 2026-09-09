@@ -212,6 +212,11 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.EXCEPTIONS_VIEW, PERMISSIONS.EXCEPTIONS_CREATE,
     PERMISSIONS.NOTIFICATIONS_VIEW,
   ],
+
+  // Not a real login identity — see getOrCreateIntegrationSystemUser(). Holds zero normal
+  // JWT-auth permissions; partner API requests are authorized entirely via authenticatePartner()
+  // + requireScope(), never via this role.
+  PARTNER_API: [],
 }
 
 // Get all permissions for a role

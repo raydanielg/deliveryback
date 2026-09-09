@@ -2,6 +2,13 @@ import prisma from "../../prisma/client.js"
 import { calculateVolumetricWeight, getChargeableWeight, calculateQuote } from "../pricing/service.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
 import { createSGRBookingSchema, verifyWeighSchema, consolidateSchema, loadOnTrainSchema } from "./validation.js"
+import {
+  createSGRLegs, initiateFirstMile, receiveCargoAtStation,
+  startScreening, completeScreening, assignToTrain, loadCargoOnTrain,
+  departTrain, arriveTrain, initiateLastMile, verifyCollection,
+  raiseSGRException, getSGRControlTower, getPackageTracking,
+} from "./engine.js"
+import { calculateSGRQuote, createSGRPricingRule, listSGRPricing } from "./pricing.js"
 
 function generateTrackingNumber() {
   const year = new Date().getFullYear()
@@ -135,10 +142,25 @@ export async function createSGRBooking(req, res, next) {
         shipmentId: shipment.id,
         event: "SGR_BOOKING_CREATED",
         status: "BOOKED",
-        description: `SGR booking confirmed from ${originStation.name} to ${destStation.name}`,
+        description: `SGR booking confirmed from ${originStation.name} to ${destStation.name}. Service: ${data.sgrServiceType}.`,
         location: originStation.city,
       },
     })
+
+    // Create SGR multi-leg records
+    try {
+      await createSGRLegs(shipment.id)
+    } catch (legErr) {
+      console.error("Failed to create SGR legs:", legErr)
+    }
+
+    // If DOOR_TO_STATION or DOOR_TO_DOOR, set status to AWAITING_CARGO for first mile
+    if (data.sgrServiceType === "DOOR_TO_STATION" || data.sgrServiceType === "DOOR_TO_DOOR") {
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: { status: "AWAITING_CARGO" },
+      })
+    }
 
     res.status(201).json({ success: true, data: shipment, message: "SGR booking created successfully" })
   } catch (err) { next(err) }
@@ -370,5 +392,178 @@ export async function getSGRStats(req, res, next) {
         activeManifests,
       },
     })
+  } catch (err) { next(err) }
+}
+
+// ============================================================
+// SGR LOGISTICS ENGINE ENDPOINTS
+// ============================================================
+
+export async function startFirstMile(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await initiateFirstMile(id, req)
+    res.json({ success: true, data: result, message: "First mile transport request created" })
+  } catch (err) { next(err) }
+}
+
+export async function receiveCargo(req, res, next) {
+  try {
+    const { id } = req.params
+    const { stationId, packageBarcodes } = req.body
+    const result = await receiveCargoAtStation(id, stationId, req.user.id, { packageBarcodes })
+    res.json({ success: true, data: result, message: "Cargo received at station" })
+  } catch (err) { next(err) }
+}
+
+export async function beginScreening(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await startScreening(id, req.user.id, req.body)
+    res.json({ success: true, data: result, message: "Screening started" })
+  } catch (err) { next(err) }
+}
+
+export async function finishScreening(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await completeScreening(id, req.user.id, req.body)
+    res.json({ success: true, data: result, message: "Screening completed — cargo ready for rail" })
+  } catch (err) { next(err) }
+}
+
+export async function allocateToTrain(req, res, next) {
+  try {
+    const { id } = req.params
+    const { trainCapacityId } = req.body
+    if (!trainCapacityId) return res.status(400).json({ success: false, message: "trainCapacityId is required" })
+    const result = await assignToTrain(id, trainCapacityId, req.user.id)
+    res.json({ success: true, data: result, message: `Assigned to train ${result.train.trainNumber}` })
+  } catch (err) { next(err) }
+}
+
+export async function loadCargo(req, res, next) {
+  try {
+    const { id } = req.params
+    const { trainCapacityId, packageBarcodes } = req.body
+    if (!trainCapacityId) return res.status(400).json({ success: false, message: "trainCapacityId is required" })
+    const result = await loadCargoOnTrain(id, trainCapacityId, req.user.id, { packageBarcodes })
+    res.json({ success: true, data: result, message: "Cargo loaded onto train" })
+  } catch (err) { next(err) }
+}
+
+export async function departTrainController(req, res, next) {
+  try {
+    const { trainCapacityId } = req.params
+    const result = await departTrain(trainCapacityId, req.user.id)
+    res.json({ success: true, data: result, message: `Train departed. ${result.shipmentsUpdated} shipments in transit.` })
+  } catch (err) { next(err) }
+}
+
+export async function arriveTrainController(req, res, next) {
+  try {
+    const { trainCapacityId } = req.params
+    const result = await arriveTrain(trainCapacityId, req.user.id, req.body)
+    res.json({ success: true, data: result, message: `Train arrived. ${result.shipmentsUpdated} shipments updated.` })
+  } catch (err) { next(err) }
+}
+
+export async function startLastMile(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await initiateLastMile(id, req)
+    res.json({ success: true, data: result, message: "Last mile transport request created" })
+  } catch (err) { next(err) }
+}
+
+export async function collectCargo(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await verifyCollection(id, req.user.id, req.body)
+    res.json({ success: true, data: result, message: "Cargo collected successfully" })
+  } catch (err) { next(err) }
+}
+
+export async function raiseException(req, res, next) {
+  try {
+    const { id } = req.params
+    const { type, reason, description, stationId } = req.body
+    if (!type || !reason) return res.status(400).json({ success: false, message: "type and reason are required" })
+    const result = await raiseSGRException(id, req.user.id, { type, reason, description, stationId })
+    res.json({ success: true, data: result, message: "Exception raised" })
+  } catch (err) { next(err) }
+}
+
+export async function getControlTower(req, res, next) {
+  try {
+    const result = await getSGRControlTower()
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
+}
+
+export async function getShipmentPackages(req, res, next) {
+  try {
+    const { id } = req.params
+    const result = await getPackageTracking(id)
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
+}
+
+export async function getSGRPricing(req, res, next) {
+  try {
+    const result = await listSGRPricing(req.query)
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
+}
+
+export async function addSGRPricing(req, res, next) {
+  try {
+    const result = await createSGRPricingRule(req.body)
+    res.status(201).json({ success: true, data: result, message: "SGR pricing rule created" })
+  } catch (err) { next(err) }
+}
+
+export async function getSGRQuote(req, res, next) {
+  try {
+    const {
+      originStationId, destStationId, serviceType,
+      actualWeightKg, declaredValue, insuranceEnabled,
+      specialHandling, packageCount,
+    } = req.body
+
+    if (!originStationId || !destStationId || !actualWeightKg) {
+      return res.status(400).json({ success: false, message: "originStationId, destStationId, and actualWeightKg are required" })
+    }
+
+    const result = await calculateSGRQuote({
+      originStationId, destStationId,
+      serviceType: serviceType || "STATION_TO_STATION",
+      actualWeightKg: Number(actualWeightKg),
+      declaredValue: Number(declaredValue || 0),
+      insuranceEnabled: insuranceEnabled || false,
+      specialHandling: specialHandling || [],
+      packageCount: packageCount || 1,
+    })
+
+    res.json({ success: true, data: result })
+  } catch (err) { next(err) }
+}
+
+export async function getShipmentLegs(req, res, next) {
+  try {
+    const { id } = req.params
+    const legs = await prisma.sgrLeg.findMany({
+      where: { shipmentId: id },
+      include: {
+        originStation: { select: { id: true, name: true, code: true, city: true } },
+        destStation: { select: { id: true, name: true, code: true, city: true } },
+        driver: { select: { id: true, user: { select: { name: true } } } },
+        vehicle: { select: { id: true, registrationNo: true } },
+        trainCapacity: { select: { id: true, trainNumber: true, route: true, departureAt: true } },
+        trip: { select: { id: true, tripNumber: true, status: true } },
+      },
+      orderBy: { legNumber: "asc" },
+    })
+    res.json({ success: true, data: legs })
   } catch (err) { next(err) }
 }

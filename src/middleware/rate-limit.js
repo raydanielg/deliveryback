@@ -22,3 +22,15 @@ export const publicEndpointLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: "Too many requests. Please try again later." },
 })
+
+// Per-partner limit on the external integration API (Part O) — keyed by partner id (set by
+// authenticatePartner, which must run first), not by IP, so one partner's volume can never
+// exhaust another's quota and a partner behind a shared NAT/proxy isn't wrongly throttled.
+export const partnerApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.partner?.id || req.ip,
+  message: { success: false, message: "Rate limit exceeded for this partner. Try again shortly." },
+})

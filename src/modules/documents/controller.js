@@ -16,9 +16,37 @@ const uploadDocumentSchema = z.object({
   mimeType: z.string().optional(),
 })
 
+const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER", "CUSTOMER_SUPPORT", "WAREHOUSE_MANAGER", "DISPATCHER"]
+
 export async function listDocuments(req, res, next) {
   try {
     const { shipmentId } = req.query
+    const isStaff = STAFF_ROLES.includes(req.user.role)
+
+    // Non-staff (CUSTOMER/DRIVER) must scope to one shipment they actually own — without
+    // this, calling GET /documents with no filter (or with someone else's shipmentId)
+    // previously returned every invoice/customs-declaration/bill-of-lading fileUrl in
+    // the system to any authenticated user.
+    if (!isStaff) {
+      if (!shipmentId) {
+        return res.status(400).json({ success: false, message: "shipmentId is required" })
+      }
+      const shipment = await prisma.shipment.findUnique({
+        where: { id: shipmentId },
+        select: { createdById: true, driverId: true },
+      })
+      if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+      if (req.user.role === "CUSTOMER" && shipment.createdById !== req.user.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+      if (req.user.role === "DRIVER") {
+        const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+        if (!driver || shipment.driverId !== driver.id) {
+          return res.status(404).json({ success: false, message: "Shipment not found" })
+        }
+      }
+    }
+
     const where = {}
     if (shipmentId) where.shipmentId = shipmentId
 
@@ -37,6 +65,18 @@ export async function uploadDocument(req, res, next) {
 
     const shipment = await prisma.shipment.findUnique({ where: { id: data.shipmentId } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+
+    if (!STAFF_ROLES.includes(req.user.role)) {
+      if (req.user.role === "CUSTOMER" && shipment.createdById !== req.user.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+      if (req.user.role === "DRIVER") {
+        const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+        if (!driver || shipment.driverId !== driver.id) {
+          return res.status(404).json({ success: false, message: "Shipment not found" })
+        }
+      }
+    }
 
     const doc = await prisma.shipmentDocument.create({
       data: {

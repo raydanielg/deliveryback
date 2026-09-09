@@ -9,6 +9,25 @@ function generateWaybillNumber() {
 export async function getWaybill(req, res, next) {
   try {
     const { shipmentId } = req.params
+
+    // Ownership check first, matching shipments.getShipment — a waybill embeds sender
+    // and recipient full name/phone/address plus pricing, so this can't be left open to
+    // any authenticated user the way it previously was (no check at all).
+    const owningShipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { createdById: true, driverId: true },
+    })
+    if (!owningShipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+    if (req.user.role === "CUSTOMER" && owningShipment.createdById !== req.user.id) {
+      return res.status(404).json({ success: false, message: "Shipment not found" })
+    }
+    if (req.user.role === "DRIVER") {
+      const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+      if (!driver || owningShipment.driverId !== driver.id) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
+    }
+
     const waybill = await prisma.waybill.findFirst({
       where: { shipmentId },
     })

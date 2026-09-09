@@ -1,6 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { createExceptionSchema, updateExceptionSchema, createReturnSchema, driverReportSchema } from "./validation.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
+import { emitEvent, EVENTS } from "../integrations/event-bus.js"
 
 export async function listExceptions(req, res, next) {
   try {
@@ -70,6 +71,10 @@ export async function createException(req, res, next) {
       },
     })
 
+    await emitEvent(EVENTS.EXCEPTION_CREATED, {
+      exception_id: exception.id, shipment_id: data.shipmentId, type: data.type, reason: data.reason,
+    }, shipment.partnerId ? { partnerId: shipment.partnerId } : {})
+
     res.status(201).json({ success: true, data: exception, message: "Exception created" })
   } catch (err) { next(err) }
 }
@@ -137,6 +142,11 @@ export async function resolveException(req, res, next) {
       },
     })
 
+    const shipment = await prisma.shipment.findUnique({ where: { id: exception.shipmentId }, select: { partnerId: true } })
+    await emitEvent(EVENTS.EXCEPTION_RESOLVED, {
+      exception_id: exception.id, shipment_id: exception.shipmentId, resolution,
+    }, shipment?.partnerId ? { partnerId: shipment.partnerId } : {})
+
     res.json({ success: true, data: exception, message: "Exception resolved" })
   } catch (err) { next(err) }
 }
@@ -173,12 +183,18 @@ export async function getExceptionStats(req, res, next) {
 export async function createDriverReport(req, res, next) {
   try {
     const data = driverReportSchema.parse(req.body)
-    const driverId = req.user.id
+    // Shipment.driverId references Driver.id, not User.id — resolve the calling driver's
+    // own Driver record once and use that for both the ownership check and the fallback lookup.
+    const driver = await prisma.driver.findUnique({ where: { userId: req.user.id } })
+    const driverId = driver?.id
 
     let shipmentId = data.shipmentId
     if (shipmentId) {
       const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } })
       if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+      if (!driverId || shipment.driverId !== driverId) {
+        return res.status(404).json({ success: false, message: "Shipment not found" })
+      }
     } else {
       const latestShipment = await prisma.shipment.findFirst({
         where: { driverId },
@@ -205,7 +221,7 @@ export async function createDriverReport(req, res, next) {
         type: "DRIVER_REPORT",
         title: `Driver Report: ${data.type.replace(/_/g, " ")}`,
         message: data.reason,
-        userId: driverId,
+        userId: req.user.id,
       },
     }).catch(() => {})
 
