@@ -42,6 +42,13 @@ export async function startConnection(connectionId, connectionName, createdBy) {
     })
   }
 
+  // Clean up any existing provider instance
+  const existing = connections.get(connectionId)
+  if (existing) {
+    try { await existing.disconnect(false) } catch {}
+    connections.delete(connectionId)
+  }
+
   const provider = new BaileysProvider({ connectionId })
   connections.set(connectionId, provider)
 
@@ -121,6 +128,13 @@ export async function restoreConnection(connectionId) {
   const conn = await prisma.whatsAppConnection.findUnique({ where: { id: connectionId } })
   if (!conn) throw new Error("Connection not found")
   if (!conn.sessionData) throw new Error("No saved session for this connection")
+
+  // Clean up any existing provider instance
+  const existing = connections.get(connectionId)
+  if (existing) {
+    try { await existing.disconnect(false) } catch {}
+    connections.delete(connectionId)
+  }
 
   await prisma.whatsAppConnection.update({
     where: { id: connectionId },
@@ -271,9 +285,21 @@ export async function reconnectConnection(connectionId) {
   const conn = await prisma.whatsAppConnection.findUnique({ where: { id: connectionId } })
   if (!conn) throw new Error("Connection not found")
 
+  // Clean up any existing provider instance first
+  const existing = connections.get(connectionId)
+  if (existing) {
+    try { await existing.disconnect(false) } catch {}
+    connections.delete(connectionId)
+  }
+
   if (conn.sessionData) {
     return restoreConnection(connectionId)
   } else {
+    // No session — start fresh with QR
+    await prisma.whatsAppConnection.update({
+      where: { id: connectionId },
+      data: { status: "CONNECTING", qrCode: null, lastError: null },
+    })
     return startConnection(connectionId, conn.name, conn.createdBy)
   }
 }
