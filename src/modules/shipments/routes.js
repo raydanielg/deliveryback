@@ -381,7 +381,16 @@ router.get("/:id", getShipment)
  *       200:
  *         description: Status updated
  */
-router.put("/:id/status", updateShipmentStatus)
+// Staff-only manual override — this accepts ANY status in the enum, including
+// PAYMENT_CONFIRMED, with no ownership check. It previously had no role gate at all,
+// letting any authenticated CUSTOMER call it on any shipment (not just their own) and
+// have "Payment Confirmed" render on that shipment's public tracking page. Drivers use
+// the dedicated OTP-verified pickup/delivery endpoints above instead of this one.
+router.put(
+  "/:id/status",
+  authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER"),
+  updateShipmentStatus
+)
 
 /**
  * @swagger

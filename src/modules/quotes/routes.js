@@ -9,17 +9,13 @@ import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
 const router = Router()
 
-router.use(authenticate)
-
 /**
  * @swagger
  * /api/v1/quotes/calculate:
  *   post:
  *     summary: Calculate a shipping quote
- *     description: Calculates the estimated shipping cost based on origin, destination, weight, and pricing rules.
+ *     description: Calculates the estimated shipping cost based on origin, destination, weight, and pricing rules. Public — a visitor must be able to price a shipment before creating an account.
  *     tags: [Quotes]
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -42,6 +38,9 @@ router.use(authenticate)
  *                 success: { type: boolean }
  *                 data: { type: object, properties: { basePrice: { type: number }, distance: { type: number }, total: { type: number } } }
  */
+// Public — neither calculateQuoteHandler nor getMultipleQuotes touch req.user, and gating
+// them behind auth previously 401'd every anonymous visitor to the public booking flow
+// before they ever reached the point of signing in, blocking quote calculation entirely.
 router.post("/calculate", calculateQuoteHandler)
 
 /**
@@ -49,10 +48,8 @@ router.post("/calculate", calculateQuoteHandler)
  * /api/v1/quotes/multiple:
  *   post:
  *     summary: Get multiple quotes at once
- *     description: Calculates quotes for multiple shipment options simultaneously.
+ *     description: Calculates quotes for multiple shipment options simultaneously. Public, same reasoning as /calculate.
  *     tags: [Quotes]
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -66,6 +63,8 @@ router.post("/calculate", calculateQuoteHandler)
  *         description: Multiple calculated quotes
  */
 router.post("/multiple", getMultipleQuotes)
+
+router.use(authenticate)
 
 /**
  * @swagger

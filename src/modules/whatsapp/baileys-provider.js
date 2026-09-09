@@ -1,5 +1,7 @@
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys"
 import { Boom } from "@hapi/boom"
+import fs from "fs"
+import path from "path"
 import { WhatsAppProviderInterface, PROVIDER_EVENTS } from "./provider-interface.js"
 import { encryptSecret, decryptSecret } from "../../utils/encryption.js"
 
@@ -40,6 +42,23 @@ export class BaileysProvider extends WhatsAppProviderInterface {
     this.reconnectDelay = 5000
     this.qrCode = null
     this.isConnected = false
+    this.saveCreds = null
+    this.authDir = null
+  }
+
+  _getAuthDir() {
+    if (!this.authDir) {
+      this.authDir = path.join(process.cwd(), ".baileys-auth", this.connectionId || `temp_${Date.now()}`)
+      fs.mkdirSync(this.authDir, { recursive: true })
+    }
+    return this.authDir
+  }
+
+  _cleanupAuthDir() {
+    if (this.authDir) {
+      try { fs.rmSync(this.authDir, { recursive: true, force: true }) } catch {}
+      this.authDir = null
+    }
   }
 
   on(event, callback) {
@@ -55,12 +74,14 @@ export class BaileysProvider extends WhatsAppProviderInterface {
   }
 
   async connect() {
-    const { version, isLatest } = await fetchLatestBaileysVersion()
+    const { version } = await fetchLatestBaileysVersion()
+    const { state, saveCreds } = await useMultiFileAuthState(this._getAuthDir())
+    this.saveCreds = saveCreds
 
     this.sock = makeWASocket({
       version,
       printQRInTerminal: false,
-      auth: this.config.authState || null,
+      auth: state,
       browser: ["XERIN Express", "Chrome", "1.0.0"],
       markOnlineOnConnect: false,
       retryRequestDelayMs: 250,
@@ -95,12 +116,26 @@ export class BaileysProvider extends WhatsAppProviderInterface {
       }
 
       this.sessionData = JSON.parse(decrypted)
+
+      // Write restored creds/keys to auth dir so useMultiFileAuthState picks them up
+      const authDir = this._getAuthDir()
+      if (this.sessionData.creds) {
+        fs.writeFileSync(path.join(authDir, "creds.json"), JSON.stringify(this.sessionData.creds))
+      }
+      if (this.sessionData.keys) {
+        for (const [key, value] of Object.entries(this.sessionData.keys)) {
+          fs.writeFileSync(path.join(authDir, `${key}.json`), JSON.stringify(value))
+        }
+      }
+
       const { version } = await fetchLatestBaileysVersion()
+      const { state, saveCreds } = await useMultiFileAuthState(authDir)
+      this.saveCreds = saveCreds
 
       this.sock = makeWASocket({
         version,
         printQRInTerminal: false,
-        auth: { creds: this.sessionData.creds, keys: this.sessionData.keys || {} },
+        auth: state,
         browser: ["XERIN Express", "Chrome", "1.0.0"],
         markOnlineOnConnect: false,
       })
@@ -174,15 +209,19 @@ export class BaileysProvider extends WhatsAppProviderInterface {
       }
     })
 
-    this.sock.ev.on("creds.update", () => {
-      if (this.sock?.authState) {
-        const creds = this.sock.authState.creds
-        const keys = this.sock.authState.keys
-        if (creds) {
-          const sessionJson = JSON.stringify({ creds, keys })
+    this.sock.ev.on("creds.update", async () => {
+      if (this.saveCreds) {
+        await this.saveCreds()
+      }
+      try {
+        const authState = this.sock?.authState
+        if (authState && authState.creds) {
+          const sessionJson = JSON.stringify({ creds: authState.creds, keys: authState.keys || {} })
           const encrypted = encrypt(sessionJson)
           this.emit(PROVIDER_EVENTS.SESSION_SAVED, encrypted)
         }
+      } catch (e) {
+        console.error("[Baileys] creds.update error:", e.message)
       }
     })
 
@@ -256,6 +295,7 @@ export class BaileysProvider extends WhatsAppProviderInterface {
       try {
         if (destroy) {
           await this.sock.logout()
+          this._cleanupAuthDir()
         } else {
           await this.sock.end(new Error("Manual disconnect"))
         }
