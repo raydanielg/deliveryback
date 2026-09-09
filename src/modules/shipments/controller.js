@@ -55,101 +55,101 @@ export async function createShipment(req, res, next) {
       })
     }
 
-    // Create addresses
-    const fromAddress = await prisma.address.create({ data: data.fromAddress })
-    const toAddress = await prisma.address.create({ data: data.toAddress })
-
     // Calculate weights
     const volumetricWeight = calculateVolumetricWeight(data.lengthCm, data.widthCm, data.heightCm)
     const chargeableWeight = getChargeableWeight(data.actualWeightKg, volumetricWeight)
 
-    // Create order
-    const order = await prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        createdById: req.user.id,
-        totalAmount: quoteResult.total,
-        currency: "TZS",
-        status: "CREATED",
-        paymentStatus: "PENDING",
-      },
-    })
+    // Addresses, order, shipment, packages and the initial history/tracking rows must all
+    // land together — a failure partway through must not leave an orphaned order/address behind.
+    const { fromAddress, toAddress, order, shipment } = await prisma.$transaction(async (tx) => {
+      const fromAddress = await tx.address.create({ data: data.fromAddress })
+      const toAddress = await tx.address.create({ data: data.toAddress })
 
-    // Create shipment
-    const shipment = await prisma.shipment.create({
-      data: {
-        trackingNumber: generateTrackingNumber(),
-        orderId: order.id,
-        createdById: req.user.id,
-        fromAddressId: fromAddress.id,
-        toAddressId: toAddress.id,
-        category: data.category,
-        shipmentType: data.shipmentType || null,
-        transportMode: data.transportMode,
-        serviceLevel: data.serviceLevel,
-        fulfillmentType: data.fulfillmentType,
-        status: "BOOKED",
-        paymentStatus: "PENDING",
-        actualWeightKg: data.actualWeightKg,
-        volumetricWeightKg: volumetricWeight || null,
-        chargeableWeightKg: chargeableWeight,
-        declaredValue: data.declaredValue || null,
-        insuranceEnabled: data.insuranceEnabled,
-        insurancePremium: quoteResult.insurancePremium || null,
-        totalAmount: quoteResult.total,
-        currency: "TZS",
-        specialHandling: data.specialHandling,
-        description: data.description || null,
-        estimatedPickup: data.estimatedPickup ? new Date(data.estimatedPickup) : null,
-        estimatedDelivery: data.estimatedDelivery ? new Date(data.estimatedDelivery) : null,
-      },
-      include: {
-        fromAddress: true,
-        toAddress: true,
-        order: true,
-      },
-    })
+      const order = await tx.order.create({
+        data: {
+          orderNumber: generateOrderNumber(),
+          createdById: req.user.id,
+          totalAmount: quoteResult.total,
+          currency: "TZS",
+          status: "CREATED",
+          paymentStatus: "PENDING",
+        },
+      })
 
-    // Create packages if provided
-    if (data.packages && data.packages.length > 0) {
-      for (const pkg of data.packages) {
-        await prisma.package.create({
-          data: {
-            shipmentId: shipment.id,
-            barcode: generateBarcode(),
-            type: pkg.type,
-            weightKg: pkg.weightKg,
-            lengthCm: pkg.lengthCm || null,
-            widthCm: pkg.widthCm || null,
-            heightCm: pkg.heightCm || null,
-            declaredValue: pkg.declaredValue || null,
-            description: pkg.description || null,
-            isFragile: pkg.isFragile,
-          },
-        })
+      const shipment = await tx.shipment.create({
+        data: {
+          trackingNumber: generateTrackingNumber(),
+          orderId: order.id,
+          createdById: req.user.id,
+          fromAddressId: fromAddress.id,
+          toAddressId: toAddress.id,
+          category: data.category,
+          shipmentType: data.shipmentType || null,
+          transportMode: data.transportMode,
+          serviceLevel: data.serviceLevel,
+          fulfillmentType: data.fulfillmentType,
+          status: "BOOKED",
+          paymentStatus: "PENDING",
+          actualWeightKg: data.actualWeightKg,
+          volumetricWeightKg: volumetricWeight || null,
+          chargeableWeightKg: chargeableWeight,
+          declaredValue: data.declaredValue || null,
+          insuranceEnabled: data.insuranceEnabled,
+          insurancePremium: quoteResult.insurancePremium || null,
+          totalAmount: quoteResult.total,
+          currency: "TZS",
+          specialHandling: data.specialHandling,
+          description: data.description || null,
+          estimatedPickup: data.estimatedPickup ? new Date(data.estimatedPickup) : null,
+          estimatedDelivery: data.estimatedDelivery ? new Date(data.estimatedDelivery) : null,
+        },
+        include: {
+          fromAddress: true,
+          toAddress: true,
+          order: true,
+        },
+      })
+
+      if (data.packages && data.packages.length > 0) {
+        for (const pkg of data.packages) {
+          await tx.package.create({
+            data: {
+              shipmentId: shipment.id,
+              barcode: generateBarcode(),
+              type: pkg.type,
+              weightKg: pkg.weightKg,
+              lengthCm: pkg.lengthCm || null,
+              widthCm: pkg.widthCm || null,
+              heightCm: pkg.heightCm || null,
+              declaredValue: pkg.declaredValue || null,
+              description: pkg.description || null,
+              isFragile: pkg.isFragile,
+            },
+          })
+        }
       }
-    }
 
-    // Create initial status history
-    await prisma.shipmentStatusHistory.create({
-      data: {
-        shipmentId: shipment.id,
-        status: "BOOKED",
-        notes: "Shipment booked",
-        createdBy: req.user.id,
-      },
-    })
+      await tx.shipmentStatusHistory.create({
+        data: {
+          shipmentId: shipment.id,
+          status: "BOOKED",
+          notes: "Shipment booked",
+          createdBy: req.user.id,
+        },
+      })
 
-    // Create initial tracking event
-    await prisma.trackingEvent.create({
-      data: {
-        shipmentId: shipment.id,
-        event: "SHIPMENT_BOOKED",
-        status: "BOOKED",
-        description: `Shipment ${shipment.trackingNumber} has been booked`,
-        location: `${fromAddress.city}, ${fromAddress.country}`,
-        createdBy: req.user.id,
-      },
+      await tx.trackingEvent.create({
+        data: {
+          shipmentId: shipment.id,
+          event: "SHIPMENT_BOOKED",
+          status: "BOOKED",
+          description: `Shipment ${shipment.trackingNumber} has been booked`,
+          location: `${fromAddress.city}, ${fromAddress.country}`,
+          createdBy: req.user.id,
+        },
+      })
+
+      return { fromAddress, toAddress, order, shipment }
     })
 
     // Notify the user who created the shipment

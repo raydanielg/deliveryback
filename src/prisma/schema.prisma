@@ -626,6 +626,7 @@ model Order {
   shipments       Shipment[]
   payments        Payment[]
   invoices        Invoice[]
+  paymentRequests PaymentRequest[]
 
   @@map("orders")
 }
@@ -1411,9 +1412,14 @@ model PaymentGateway {
 model PaymentRequest {
   id              String   @id @default(cuid())
   paymentGatewayId String?
+  orderId         String?
   payerId         String?
   paymentAmount   Decimal  @default(0) @db.Decimal(12, 2)
   currencyCode    String   @default("TZS")
+  // Our own reference sent to the gateway as its order_id/reference, used for
+  // a fast, unambiguous, idempotent webhook lookup (do NOT reuse across requests).
+  reference       String?  @unique
+  status          PaymentStatus @default(PENDING)
   isPaid          Boolean  @default(false)
   payerInformation Json?
   receiverInformation Json?
@@ -1424,6 +1430,7 @@ model PaymentRequest {
   updatedAt       DateTime @updatedAt
 
   paymentGateway  PaymentGateway? @relation(fields: [paymentGatewayId], references: [id])
+  order           Order?          @relation(fields: [orderId], references: [id])
 
   @@map("payment_requests")
 }

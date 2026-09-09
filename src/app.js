@@ -75,7 +75,16 @@ app.use(
     strictTransportSecurity: false,
   })
 )
-app.use(express.json({ limit: "10mb" }))
+// Capture the raw request body alongside the parsed one so webhook handlers
+// (payment gateways) can verify HMAC signatures over the exact bytes received.
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf
+    },
+  })
+)
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
 

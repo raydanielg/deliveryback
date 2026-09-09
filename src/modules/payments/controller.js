@@ -33,41 +33,50 @@ export async function createPayment(req, res, next) {
     const order = await prisma.order.findUnique({ where: { id: data.orderId } })
     if (!order) return res.status(404).json({ success: false, message: "Order not found" })
 
-    const payment = await prisma.payment.create({
-      data: {
-        paymentRef: generatePaymentRef(),
-        orderId: data.orderId,
-        payerId: req.user.id,
-        amount: data.amount,
-        method: data.method,
-        status: "PAID",
-        transactionId: data.transactionId,
-        paidAt: new Date(),
-      },
-    })
+    // Payment record, order balance recompute, and shipment activation must commit together —
+    // otherwise a crash between steps can leave a payment recorded as PAID with the shipment
+    // still unpaid, or vice versa.
+    const { payment, paymentStatus } = await prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          paymentRef: generatePaymentRef(),
+          orderId: data.orderId,
+          payerId: req.user.id,
+          amount: data.amount,
+          method: data.method,
+          status: "PAID",
+          transactionId: data.transactionId,
+          paidAt: new Date(),
+        },
+      })
 
-    const totalPaid = await prisma.payment.aggregate({
-      where: { orderId: data.orderId, status: "PAID" },
-      _sum: { amount: true },
-    })
+      const totalPaid = await tx.payment.aggregate({
+        where: { orderId: data.orderId, status: "PAID" },
+        _sum: { amount: true },
+      })
 
-    const orderTotal = Number(order.totalAmount)
-    const paidAmount = Number(totalPaid._sum.amount || 0)
+      const orderTotal = Number(order.totalAmount)
+      const paidAmount = Number(totalPaid._sum.amount || 0)
 
-    let paymentStatus = "PARTIAL"
-    if (paidAmount >= orderTotal) paymentStatus = "PAID"
+      let paymentStatus = "PARTIAL"
+      if (paidAmount >= orderTotal) paymentStatus = "PAID"
 
-    await prisma.order.update({
-      where: { id: data.orderId },
-      data: { paymentStatus },
+      await tx.order.update({
+        where: { id: data.orderId },
+        data: { paymentStatus },
+      })
+
+      if (paymentStatus === "PAID") {
+        await tx.shipment.updateMany({
+          where: { orderId: data.orderId },
+          data: { paymentStatus: "PAID", status: "PAYMENT_CONFIRMED" },
+        })
+      }
+
+      return { payment, paymentStatus }
     })
 
     if (paymentStatus === "PAID") {
-      await prisma.shipment.updateMany({
-        where: { orderId: data.orderId },
-        data: { paymentStatus: "PAID", status: "PAYMENT_CONFIRMED" },
-      })
-
       try {
         await createNotification(
           order.createdById,

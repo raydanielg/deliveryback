@@ -1,5 +1,5 @@
 import prisma from "../../prisma/client.js"
-import { createExceptionSchema, updateExceptionSchema, createReturnSchema } from "./validation.js"
+import { createExceptionSchema, updateExceptionSchema, createReturnSchema, driverReportSchema } from "./validation.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
 
 export async function listExceptions(req, res, next) {
@@ -167,5 +167,48 @@ export async function getExceptionStats(req, res, next) {
     const resolved = await prisma.shipmentException.count({ where: { status: "RESOLVED" } })
 
     res.json({ success: true, data: { total, open, resolved, byStatus, byType } })
+  } catch (err) { next(err) }
+}
+
+export async function createDriverReport(req, res, next) {
+  try {
+    const data = driverReportSchema.parse(req.body)
+    const driverId = req.user.id
+
+    let shipmentId = data.shipmentId
+    if (shipmentId) {
+      const shipment = await prisma.shipment.findUnique({ where: { id: shipmentId } })
+      if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
+    } else {
+      const latestShipment = await prisma.shipment.findFirst({
+        where: { driverId },
+        orderBy: { createdAt: "desc" },
+      })
+      shipmentId = latestShipment?.id
+    }
+
+    if (!shipmentId) {
+      return res.status(400).json({ success: false, message: "No shipment found to attach report" })
+    }
+
+    const exception = await prisma.shipmentException.create({
+      data: {
+        shipmentId,
+        type: data.type,
+        reason: data.reason,
+        description: data.description,
+      },
+    })
+
+    await prisma.notification.create({
+      data: {
+        type: "DRIVER_REPORT",
+        title: `Driver Report: ${data.type.replace(/_/g, " ")}`,
+        message: data.reason,
+        userId: driverId,
+      },
+    }).catch(() => {})
+
+    res.status(201).json({ success: true, data: exception, message: "Report submitted successfully" })
   } catch (err) { next(err) }
 }

@@ -2,6 +2,7 @@ import { Router } from "express"
 import {
   listExceptions, getException, createException, updateException,
   createReturn, resolveException, escalateException, getExceptionStats,
+  createDriverReport,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
@@ -13,8 +14,9 @@ router.get("/", listExceptions)
 router.get("/stats", getExceptionStats)
 router.get("/:id", getException)
 
-router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), createException)
-router.post("/return", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), createReturn)
+router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "DRIVER"), createException)
+router.post("/return", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "DRIVER"), createReturn)
+router.post("/report", authorizeRoles("DRIVER", "SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), createDriverReport)
 
 router.patch("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateException)
 router.patch("/:id/resolve", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), resolveException)

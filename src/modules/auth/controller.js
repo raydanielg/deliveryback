@@ -365,7 +365,7 @@ export async function getMyDetails(req, res, next) {
           fromAddress: { select: { city: true, country: true, address: true } },
           toAddress: { select: { city: true, country: true, address: true } },
           driver: { include: { user: { select: { name: true, phone: true, avatar: true } } } },
-          vehicle: { select: { plateNumber: true, type: true } },
+          vehicle: { select: { registrationNo: true, type: true } },
           carrier: { select: { name: true } },
           packages: true,
         },

@@ -91,38 +91,110 @@ export async function initiatePayment(req, res, next) {
     const config = gateway.mode === "live" ? gateway.liveValues : gateway.testValues
     if (!config) return res.status(400).json({ success: false, message: "Gateway configuration missing" })
 
-    let paymentResult
+    // Never trust a client-supplied amount: resolve it from the actual order balance.
+    let order = null
+    let amount = data.amount
+    if (data.orderId) {
+      order = await prisma.order.findUnique({ where: { id: data.orderId } })
+      if (!order) return res.status(404).json({ success: false, message: "Order not found" })
+      if (order.createdById !== req.user?.id && !["SUPER_ADMIN", "FINANCE"].includes(req.user?.role)) {
+        return res.status(403).json({ success: false, message: "You do not have access to this order" })
+      }
 
-    switch (data.gateway.toLowerCase()) {
-      case "selcom":
-        paymentResult = await initiateSelcomPayment(data, config)
-        break
-      case "azampesa":
-        paymentResult = await initiateAzampesaPayment(data, config)
-        break
-      default:
-        return res.status(400).json({ success: false, message: `Unsupported gateway: ${data.gateway}` })
+      const alreadyPaid = await prisma.payment.aggregate({
+        where: { orderId: order.id, status: "PAID" },
+        _sum: { amount: true },
+      })
+      const outstanding = Number(order.totalAmount) - Number(alreadyPaid._sum.amount || 0)
+      if (outstanding <= 0) {
+        return res.status(400).json({ success: false, message: "Order is already fully paid" })
+      }
+      amount = Math.min(data.amount, outstanding)
     }
 
-    // Create payment request record
-    const paymentRequest = await prisma.paymentRequest.create({
+    // Our own reference, generated up front, is what we hand the gateway as its
+    // order_id/reference — every webhook is then looked up by this single indexed
+    // field instead of guessing at a client-controlled identifier.
+    const reference = `PRQ-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`
+
+    let paymentRequest = await prisma.paymentRequest.create({
       data: {
         paymentGatewayId: gateway.id,
+        orderId: order?.id || null,
         payerId: req.user?.id,
-        paymentAmount: data.amount,
+        paymentAmount: amount,
         currencyCode: data.currency,
+        reference,
+        status: "PENDING",
         payerInformation: {
           phone: data.payerPhone,
           email: data.payerEmail,
           name: data.payerName,
         },
-        externalRedirectLink: paymentResult.redirectUrl || null,
         paymentPlatform: data.gateway,
+      },
+    })
+
+    let paymentResult
+    try {
+      switch (data.gateway.toLowerCase()) {
+        case "selcom":
+          paymentResult = await initiateSelcomPayment({ ...data, amount }, config, reference)
+          break
+        case "azampesa":
+          paymentResult = await initiateAzampesaPayment({ ...data, amount }, config, reference)
+          break
+        default:
+          await prisma.paymentRequest.delete({ where: { id: paymentRequest.id } })
+          return res.status(400).json({ success: false, message: `Unsupported gateway: ${data.gateway}` })
+      }
+    } catch (gatewayErr) {
+      await prisma.paymentRequest.update({
+        where: { id: paymentRequest.id },
+        data: { status: "FAILED", additionalData: { error: gatewayErr.message } },
+      })
+      throw gatewayErr
+    }
+
+    paymentRequest = await prisma.paymentRequest.update({
+      where: { id: paymentRequest.id },
+      data: {
+        externalRedirectLink: paymentResult.redirectUrl || null,
         additionalData: paymentResult.additionalData || null,
       },
     })
 
     res.json({ success: true, data: { paymentRequestId: paymentRequest.id, ...paymentResult } })
+  } catch (err) { next(err) }
+}
+
+// --- Poll payment status (used by clients instead of assuming success) ---
+
+export async function getPaymentRequestStatus(req, res, next) {
+  try {
+    const { id } = req.params
+    const paymentRequest = await prisma.paymentRequest.findUnique({ where: { id } })
+    if (!paymentRequest) return res.status(404).json({ success: false, message: "Payment request not found" })
+
+    if (
+      paymentRequest.payerId &&
+      req.user?.id !== paymentRequest.payerId &&
+      !["SUPER_ADMIN", "FINANCE"].includes(req.user?.role)
+    ) {
+      return res.status(403).json({ success: false, message: "You do not have access to this payment request" })
+    }
+
+    res.json({
+      success: true,
+      data: {
+        paymentRequestId: paymentRequest.id,
+        status: paymentRequest.status,
+        isPaid: paymentRequest.isPaid,
+        amount: paymentRequest.paymentAmount,
+        currency: paymentRequest.currencyCode,
+        orderId: paymentRequest.orderId,
+      },
+    })
   } catch (err) { next(err) }
 }
 
@@ -155,7 +227,31 @@ function generateSelcomHeaders(apiKey, apiSecret, requestData, signedFields) {
   }
 }
 
-async function initiateSelcomPayment(data, config) {
+// Selcom signs webhooks the same way it requires requests to be signed: an HMAC-SHA256
+// digest over `timestamp=...&field=value...` for the fields named in Signed-Fields,
+// using the merchant's secret key. Recompute it and compare in constant time.
+function verifySelcomWebhookSignature(req, secretKey) {
+  const signedFieldsHeader = req.headers["signed-fields"]
+  const digestHeader = req.headers["digest"]
+  const timestampHeader = req.headers["timestamp"]
+  if (!signedFieldsHeader || !digestHeader || !timestampHeader || !secretKey) return false
+
+  const fields = signedFieldsHeader.split(",")
+  let signingString = `timestamp=${timestampHeader}`
+  fields.forEach(f => {
+    signingString += `&${f}=${req.body?.[f] ?? ""}`
+  })
+
+  const expectedDigest = crypto.createHmac("sha256", secretKey).update(signingString).digest("base64")
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expectedDigest), Buffer.from(digestHeader))
+  } catch {
+    return false
+  }
+}
+
+async function initiateSelcomPayment(data, config, reference) {
   const {
     SELCOM_BASE_URL,
     SELCOM_VENDOR,
@@ -167,7 +263,7 @@ async function initiateSelcomPayment(data, config) {
     throw new Error("Selcom configuration incomplete")
   }
 
-  const orderId = `ORD-${Date.now()}`
+  const orderId = reference
   const buyerName = data.payerName || "Customer"
   const buyerPhone = data.payerPhone || ""
   const buyerEmail = data.payerEmail || ""
@@ -207,7 +303,7 @@ async function initiateSelcomPayment(data, config) {
   }
 
   // Step 2: Push USSD payment (wallet-payment or selcompesa-payment)
-  const transid = `TRX-${Date.now()}`
+  const transid = `${reference}-TXN`
   const paymentData = {
     transid,
     order_id: orderId,
@@ -296,7 +392,7 @@ export async function cancelSelcomOrder(req, res, next) {
 
 // --- Azampesa Payment Integration ---
 // Based on drivemond AzampesaController
-async function initiateAzampesaPayment(data, config) {
+async function initiateAzampesaPayment(data, config, reference) {
   const {
     AZAMPESA_BASE_URL,
     AZAMPESA_CLIENT_ID,
@@ -327,7 +423,7 @@ async function initiateAzampesaPayment(data, config) {
   }
 
   // Step 2: Initiate payment
-  const paymentReference = `AZP-${Date.now()}`
+  const paymentReference = reference
   const paymentData = {
     reference: paymentReference,
     amount: data.amount,
@@ -335,7 +431,7 @@ async function initiateAzampesaPayment(data, config) {
     payer_phone: data.payerPhone,
     payer_name: data.payerName || "Customer",
     callback_url: AZAMPESA_CALLBACK_URL || data.webhookUrl,
-    description: `Payment for order ${data.orderId}`,
+    description: `Payment ${paymentReference}`,
   }
 
   const paymentResponse = await fetch(`${AZAMPESA_BASE_URL}/api/v1/payments`, {
@@ -355,56 +451,157 @@ async function initiateAzampesaPayment(data, config) {
   }
 }
 
+// AzamPesa doesn't document a fixed signature scheme in this codebase's integration notes,
+// so we verify an HMAC-SHA256 of the raw request body against the gateway's client secret,
+// accepting it from either a dedicated signature header or a Bearer Authorization header.
+function verifyAzampesaWebhookSignature(req, secretKey) {
+  const signatureHeader = req.headers["x-azampesa-signature"] || req.headers["x-signature"]
+  if (!signatureHeader || !secretKey) return false
+
+  const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}))
+  const expected = crypto.createHmac("sha256", secretKey).update(raw).digest("hex")
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(String(signatureHeader)))
+  } catch {
+    return false
+  }
+}
+
+// --- Shared: apply a confirmed payment atomically to its payment request + order + shipments ---
+async function applyConfirmedPayment(paymentRequest, { transactionId, method, metadata }) {
+  await prisma.$transaction(async (tx) => {
+    await tx.paymentRequest.update({
+      where: { id: paymentRequest.id },
+      data: { isPaid: true, status: "PAID" },
+    })
+
+    if (!paymentRequest.orderId) return
+
+    const order = await tx.order.findUnique({ where: { id: paymentRequest.orderId } })
+    if (!order) return
+
+    await tx.payment.create({
+      data: {
+        paymentRef: paymentRequest.reference,
+        orderId: order.id,
+        payerId: paymentRequest.payerId,
+        amount: paymentRequest.paymentAmount,
+        currency: paymentRequest.currencyCode,
+        method: method || "MOBILE_MONEY",
+        status: "PAID",
+        transactionId: transactionId || paymentRequest.reference,
+        paidAt: new Date(),
+        metadata: metadata || null,
+      },
+    })
+
+    const totalPaid = await tx.payment.aggregate({
+      where: { orderId: order.id, status: "PAID" },
+      _sum: { amount: true },
+    })
+    const paidAmount = Number(totalPaid._sum.amount || 0)
+    const newPaymentStatus = paidAmount >= Number(order.totalAmount) ? "PAID" : "PARTIAL"
+
+    await tx.order.update({ where: { id: order.id }, data: { paymentStatus: newPaymentStatus } })
+
+    if (newPaymentStatus === "PAID") {
+      await tx.shipment.updateMany({
+        where: { orderId: order.id },
+        data: { paymentStatus: "PAID", status: "PAYMENT_CONFIRMED" },
+      })
+    }
+  })
+
+  if (paymentRequest.payerId) {
+    try {
+      const shipment = paymentRequest.orderId
+        ? await prisma.shipment.findFirst({ where: { orderId: paymentRequest.orderId } })
+        : null
+      await createNotification(
+        paymentRequest.payerId,
+        "PAYMENT_CONFIRMED",
+        "Payment Confirmed",
+        shipment
+          ? `Your payment for shipment ${shipment.trackingNumber} has been confirmed successfully.`
+          : "Your payment has been confirmed successfully.",
+        shipment ? { shipmentId: shipment.id, trackingNumber: shipment.trackingNumber } : {}
+      )
+    } catch (notifErr) {
+      console.warn("Payment gateway notification failed:", notifErr.message)
+    }
+  }
+}
+
 // --- Payment Webhook/Callback Handlers ---
 
 export async function selcomWebhook(req, res, next) {
   try {
-    const { order_id, payment_status, transid, reference, channel, amount, phone, result, resultcode } = req.body
+    const { order_id, payment_status, transid, reference, channel, amount, phone, resultcode } = req.body
 
-    const paymentRequest = await prisma.paymentRequest.findFirst({
-      where: { additionalData: { path: ["orderId"], equals: order_id } },
-    })
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: "Missing order_id" })
+    }
 
+    const paymentRequest = await prisma.paymentRequest.findUnique({ where: { reference: order_id } })
     if (!paymentRequest) {
       return res.status(404).json({ success: false, message: "Payment request not found" })
     }
 
-    if (payment_status === "COMPLETED" || payment_status === "SUCCESS") {
+    const gateway = paymentRequest.paymentGatewayId
+      ? await prisma.paymentGateway.findUnique({ where: { id: paymentRequest.paymentGatewayId } })
+      : null
+    const config = gateway ? (gateway.mode === "live" ? gateway.liveValues : gateway.testValues) : null
+    const secret = config?.SELCOM_SECRET_KEY
+
+    const signatureValid = verifySelcomWebhookSignature(req, secret)
+    if (!signatureValid) {
+      // Live gateways must always verify. Test-mode gateways are allowed through (with a
+      // loud warning) so integrations can be exercised against sandboxes that don't sign.
+      if (gateway?.mode !== "test") {
+        console.warn(`Selcom webhook signature verification failed for order ${order_id}`)
+        return res.status(401).json({ success: false, message: "Invalid webhook signature" })
+      }
+      console.warn(`Selcom webhook signature could not be verified (test mode, proceeding) for order ${order_id}`)
+    }
+
+    // Idempotency: a retried/duplicate webhook must never re-process a completed payment.
+    if (paymentRequest.status === "PAID") {
+      return res.json({ success: true, message: "Webhook already processed" })
+    }
+
+    const isSuccess = payment_status === "COMPLETED" || payment_status === "SUCCESS"
+    const isFailure = payment_status === "FAILED" || payment_status === "CANCELLED" || resultcode === "FAIL"
+
+    if (isSuccess) {
+      const paidAmount = Number(amount)
+      if (Number.isFinite(paidAmount) && Math.abs(paidAmount - Number(paymentRequest.paymentAmount)) > 0.5) {
+        console.error(`Selcom webhook amount mismatch for ${order_id}: expected ${paymentRequest.paymentAmount}, got ${amount}`)
+        await prisma.paymentRequest.update({
+          where: { id: paymentRequest.id },
+          data: {
+            status: "FAILED",
+            additionalData: { ...paymentRequest.additionalData, webhookData: req.body, error: "amount_mismatch" },
+          },
+        })
+        return res.status(400).json({ success: false, message: "Amount mismatch" })
+      }
+
       await prisma.paymentRequest.update({
         where: { id: paymentRequest.id },
-        data: {
-          isPaid: true,
-          additionalData: {
-            ...paymentRequest.additionalData,
-            webhookData: { transid, reference, channel, amount, phone, payment_status, result, resultcode },
-          },
-        },
+        data: { additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
       })
 
-      // Update related shipment payment status if payer exists
-      if (paymentRequest.payerId) {
-        const shipment = await prisma.shipment.findFirst({
-          where: { payments: { some: { paymentRef: order_id } } },
-        })
-        if (shipment) {
-          await prisma.shipment.update({
-            where: { id: shipment.id },
-            data: { paymentStatus: "PAID" },
-          })
-
-          try {
-            await createNotification(
-              paymentRequest.payerId,
-              "PAYMENT_CONFIRMED",
-              "Payment Confirmed",
-              `Your payment for shipment ${shipment.trackingNumber} has been confirmed successfully.`,
-              { shipmentId: shipment.id, trackingNumber: shipment.trackingNumber }
-            )
-          } catch (notifErr) {
-            console.warn("Payment gateway notification failed:", notifErr.message)
-          }
-        }
-      }
+      await applyConfirmedPayment(paymentRequest, {
+        transactionId: transid || reference,
+        method: "MOBILE_MONEY",
+        metadata: { gateway: "selcom", channel, phone },
+      })
+    } else if (isFailure) {
+      await prisma.paymentRequest.update({
+        where: { id: paymentRequest.id },
+        data: { status: "FAILED", additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
+      })
     }
 
     res.json({ success: true, message: "Webhook processed" })
@@ -413,20 +610,69 @@ export async function selcomWebhook(req, res, next) {
 
 export async function azampesaCallback(req, res, next) {
   try {
-    const { reference, status } = req.body
+    const { reference, status, amount, transactionId } = req.body
 
-    const paymentRequest = await prisma.paymentRequest.findFirst({
-      where: { additionalData: { path: ["paymentReference"], equals: reference } },
-    })
+    if (!reference) {
+      return res.status(400).json({ success: false, message: "Missing reference" })
+    }
 
+    const paymentRequest = await prisma.paymentRequest.findUnique({ where: { reference } })
     if (!paymentRequest) {
       return res.status(404).json({ success: false, message: "Payment request not found" })
     }
 
-    if (status === "SUCCESS" || status === "COMPLETED") {
+    const gateway = paymentRequest.paymentGatewayId
+      ? await prisma.paymentGateway.findUnique({ where: { id: paymentRequest.paymentGatewayId } })
+      : null
+    const config = gateway ? (gateway.mode === "live" ? gateway.liveValues : gateway.testValues) : null
+    const secret = config?.AZAMPESA_CLIENT_SECRET
+
+    const signatureValid = verifyAzampesaWebhookSignature(req, secret)
+    if (!signatureValid) {
+      if (gateway?.mode !== "test") {
+        console.warn(`AzamPesa webhook signature verification failed for reference ${reference}`)
+        return res.status(401).json({ success: false, message: "Invalid webhook signature" })
+      }
+      console.warn(`AzamPesa webhook signature could not be verified (test mode, proceeding) for reference ${reference}`)
+    }
+
+    if (paymentRequest.status === "PAID") {
+      return res.json({ success: true, message: "Callback already processed" })
+    }
+
+    const isSuccess = status === "SUCCESS" || status === "COMPLETED"
+    const isFailure = status === "FAILED" || status === "CANCELLED"
+
+    if (isSuccess) {
+      if (amount !== undefined) {
+        const paidAmount = Number(amount)
+        if (Number.isFinite(paidAmount) && Math.abs(paidAmount - Number(paymentRequest.paymentAmount)) > 0.5) {
+          console.error(`AzamPesa callback amount mismatch for ${reference}`)
+          await prisma.paymentRequest.update({
+            where: { id: paymentRequest.id },
+            data: {
+              status: "FAILED",
+              additionalData: { ...paymentRequest.additionalData, webhookData: req.body, error: "amount_mismatch" },
+            },
+          })
+          return res.status(400).json({ success: false, message: "Amount mismatch" })
+        }
+      }
+
       await prisma.paymentRequest.update({
         where: { id: paymentRequest.id },
-        data: { isPaid: true },
+        data: { additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
+      })
+
+      await applyConfirmedPayment(paymentRequest, {
+        transactionId: transactionId || reference,
+        method: "MOBILE_MONEY",
+        metadata: { gateway: "azampesa" },
+      })
+    } else if (isFailure) {
+      await prisma.paymentRequest.update({
+        where: { id: paymentRequest.id },
+        data: { status: "FAILED", additionalData: { ...paymentRequest.additionalData, webhookData: req.body } },
       })
     }
 

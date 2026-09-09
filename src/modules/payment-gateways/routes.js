@@ -3,7 +3,7 @@ import {
   listPaymentGateways, getPaymentGateway, createPaymentGateway,
   updatePaymentGateway, deletePaymentGateway, togglePaymentGateway,
   initiatePayment, selcomWebhook, azampesaCallback, getActiveGateways,
-  getSelcomOrderStatus, cancelSelcomOrder,
+  getSelcomOrderStatus, cancelSelcomOrder, getPaymentRequestStatus,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
@@ -109,6 +109,30 @@ router.use(authenticate)
  *         description: Invalid request or gateway inactive
  */
 router.post("/initiate", initiatePayment)
+
+/**
+ * @swagger
+ * /api/v1/payment-gateways/requests/{id}/status:
+ *   get:
+ *     summary: Get the current status of a payment request
+ *     description: Poll this after initiating a payment instead of assuming success — only a webhook-confirmed status here reflects a verified payment.
+ *     tags: [Payment Gateways]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Payment request status
+ *       403:
+ *         description: Not your payment request
+ *       404:
+ *         description: Payment request not found
+ */
+router.get("/requests/:id/status", getPaymentRequestStatus)
 
 /**
  * @swagger
