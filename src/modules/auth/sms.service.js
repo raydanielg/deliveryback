@@ -1,7 +1,7 @@
 const SMS_API_URL = process.env.SMS_API_URL || "http://mshastra.com/sendsms_api_json.aspx"
 const SMS_USERNAME = process.env.SMS_USERNAME || "XERINDELIV"
 const SMS_PASSWORD = process.env.SMS_PASSWORD || ""
-const SMS_SENDER_ID = process.env.SMS_SENDER_ID || "XERINDELIV"
+const SMS_SENDER_ID = process.env.SMS_SENDER_ID || "XERIN"
 
 function normalizePhone(phone) {
   let cleanPhone = phone.replace(/\s+/g, "").replace(/^\+/, "")
