@@ -13,13 +13,16 @@ function normalizePhone(phone) {
 }
 
 async function callSmsGateway(cleanPhone, message) {
-  const payload = {
-    user: SMS_USERNAME,
-    pwd: SMS_PASSWORD,
-    senderid: SMS_SENDER_ID,
-    mobilenumber: cleanPhone,
-    message: message,
-  }
+  const payload = [
+    {
+      user: SMS_USERNAME,
+      pwd: SMS_PASSWORD,
+      number: cleanPhone,
+      msg: message,
+      sender: SMS_SENDER_ID,
+      language: "English",
+    },
+  ]
 
   console.log(`[SMS] Sending to ${cleanPhone} via ${SMS_API_URL}`)
   console.log(`[SMS] Payload:`, JSON.stringify(payload))
@@ -44,25 +47,30 @@ async function callSmsGateway(cleanPhone, message) {
   } catch {
   }
 
-  if (parsed) {
-    const status = parsed.Status || parsed.status || parsed.result || ""
-    const errorCode = parsed.ErrorCode || parsed.errorCode || parsed.error_code || ""
-    const errorMsg = parsed.ErrorMessage || parsed.errorMessage || parsed.Message || parsed.message || ""
+  if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+    const result = parsed[0]
+    const strResponse = result.str_response || result.response || ""
 
-    if (status && String(status).toLowerCase() !== "success" && status !== "0" && status !== 0) {
-      throw new Error(`SMS gateway error: ${status} ${errorCode} ${errorMsg}`)
+    if (strResponse && !strResponse.toLowerCase().includes("success")) {
+      throw new Error(`SMS gateway error: ${strResponse}`)
     }
-    if (errorCode && errorCode !== "0" && errorCode !== 0 && errorCode !== "000") {
-      throw new Error(`SMS gateway error code ${errorCode}: ${errorMsg}`)
-    }
-  } else {
-    const lower = rawBody.toLowerCase().trim()
-    if (lower.includes("error") || lower.includes("fail") || lower.includes("invalid") || lower.includes("denied")) {
-      throw new Error(`SMS gateway error: ${rawBody}`)
-    }
+    return { success: true, providerId: result.msg_id || strResponse }
   }
 
-  return { success: true, providerId: parsed ? JSON.stringify(parsed) : rawBody }
+  if (parsed) {
+    const strResponse = parsed.str_response || parsed.response || parsed.Status || parsed.status || ""
+    if (strResponse && !strResponse.toLowerCase().includes("success")) {
+      throw new Error(`SMS gateway error: ${strResponse}`)
+    }
+    return { success: true, providerId: parsed.msg_id || strResponse }
+  }
+
+  const lower = rawBody.toLowerCase().trim()
+  if (lower.includes("error") || lower.includes("fail") || lower.includes("invalid") || lower.includes("denied")) {
+    throw new Error(`SMS gateway error: ${rawBody}`)
+  }
+
+  return { success: true, providerId: rawBody }
 }
 
 export async function sendOtpSms(phone, otp, name) {
