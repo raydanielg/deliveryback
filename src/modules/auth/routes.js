@@ -4,6 +4,7 @@ import multer from "multer"
 import {
   register,
   login,
+  pinLogin,
   getMe,
   getMyDetails,
   updateProfile,
@@ -115,6 +116,35 @@ router.post("/register", authLimiter, register)
  *         description: Too many requests - rate limit exceeded
  */
 router.post("/login", authLimiter, login)
+
+/**
+ * @swagger
+ * /api/auth/pin-login:
+ *   post:
+ *     summary: Staff PIN/badge login for shared warehouse scanning devices
+ *     description: Authenticates warehouse/operations staff via badge code + PIN instead of email/password. Rate limited to 10 requests per 15 minutes.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [badgeCode, pin]
+ *             properties:
+ *               badgeCode: { type: string }
+ *               pin: { type: string, minLength: 4, maxLength: 8 }
+ *     responses:
+ *       200:
+ *         description: Login successful. Returns JWT token and user details.
+ *       401:
+ *         description: Invalid badge or PIN
+ *       403:
+ *         description: Role not eligible for PIN login, or account deactivated
+ *       429:
+ *         description: Too many requests - rate limit exceeded
+ */
+router.post("/pin-login", authLimiter, pinLogin)
 
 /**
  * @swagger

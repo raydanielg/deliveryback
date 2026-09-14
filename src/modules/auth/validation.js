@@ -44,6 +44,13 @@ export const loginSchema = z.object({
   path: ["login"],
 })
 
+// Staff quick-login for shared warehouse scanning devices — badge identifies who, PIN is
+// the secret, independent of the account's email/password.
+export const pinLoginSchema = z.object({
+  badgeCode: z.string().min(1, "Badge code is required"),
+  pin: z.string().min(4, "PIN must be at least 4 digits").max(8, "PIN must not exceed 8 digits").regex(/^\d+$/, "PIN must contain only digits"),
+})
+
 export const forgotPasswordSchema = z.object({
   email: z
     .string()

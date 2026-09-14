@@ -54,6 +54,13 @@ import dispatchRoutes from "./modules/dispatch/routes.js"
 import transportRoutes from "./modules/transport/routes.js"
 import tripRoutes from "./modules/trips/routes.js"
 import whatsappRoutes from "./modules/whatsapp/routes.js"
+import consolidationBoxesRoutes from "./modules/consolidation-boxes/routes.js"
+import tripManifestsRoutes from "./modules/trip-manifests/routes.js"
+import shelfLocationsRoutes from "./modules/shelf-locations/routes.js"
+import cargoIntakeRoutes from "./modules/cargo-intake/routes.js"
+import deliveryConfigRoutes from "./modules/delivery-config/routes.js"
+import paymentApprovalsRoutes from "./modules/payment-approvals/routes.js"
+import scanRoutes from "./modules/scan/routes.js"
 import { initWhatsAppEngine } from "./modules/whatsapp/controller.js"
 import { initWhatsAppEventIntegration } from "./modules/whatsapp/event-integration.js"
 import { listAuditLogs } from "./middleware/audit-logger.js"
@@ -200,6 +207,15 @@ app.use("/api/v1/dispatch", dispatchRoutes)
 app.use("/api/v1/transport", transportRoutes)
 app.use("/api/v1/trips", tripRoutes)
 app.use("/api/v1/whatsapp", whatsappRoutes)
+// Dubai<->Tanzania consolidation, passenger trip manifests, shelf locations, delivery
+// config, payment approval and the unified scan-resolve endpoint.
+app.use("/api/v1/consolidation-boxes", consolidationBoxesRoutes)
+app.use("/api/v1/trip-manifests", tripManifestsRoutes)
+app.use("/api/v1/shelf-locations", shelfLocationsRoutes)
+app.use("/api/v1/cargo-intake", cargoIntakeRoutes)
+app.use("/api/v1/delivery-config", deliveryConfigRoutes)
+app.use("/api/v1/payment-approvals", paymentApprovalsRoutes)
+app.use("/api/v1/scan", scanRoutes)
 
 // Audit logs
 app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)

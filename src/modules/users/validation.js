@@ -47,3 +47,9 @@ export const changePasswordSchema = z.object({
     .regex(/[a-z]/, "Password must contain at least one lowercase letter")
     .regex(/[0-9]/, "Password must contain at least one number"),
 })
+
+// Admin-side provisioning of a staff member's shared-device PIN/badge login.
+export const staffCredentialsSchema = z.object({
+  badgeCode: z.string().min(1).max(50),
+  pin: z.string().min(4).max(8).regex(/^\d+$/, "PIN must contain only digits"),
+})

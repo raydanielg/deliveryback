@@ -1,7 +1,7 @@
 import { Router } from "express"
 import {
   listUsers, getUser, createUser, updateUser, deleteUser,
-  toggleUserActive, changeUserRole, changePassword, getUserStats,
+  toggleUserActive, changeUserRole, changePassword, setStaffCredentials, getUserStats,
 } from "./controller.js"
 import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 
@@ -234,5 +234,36 @@ router.patch("/:id/role", authorizeRoles("SUPER_ADMIN"), changeUserRole)
  *         description: Current password incorrect
  */
 router.put("/:id/password", changePassword)
+
+/**
+ * @swagger
+ * /api/v1/users/{id}/staff-credentials:
+ *   patch:
+ *     summary: Set a staff member's PIN/badge login for shared warehouse scanning devices (admin only)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [badgeCode, pin]
+ *             properties:
+ *               badgeCode: { type: string }
+ *               pin: { type: string, minLength: 4, maxLength: 8 }
+ *     responses:
+ *       200:
+ *         description: Credentials set
+ *       409:
+ *         description: Badge code already assigned to another user
+ */
+router.patch("/:id/staff-credentials", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), setStaffCredentials)
 
 export default router

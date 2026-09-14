@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken"
 import path from "path"
 import fs from "fs/promises"
 import prisma from "../../prisma/client.js"
-import { registerSchema, loginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
+import { registerSchema, loginSchema, pinLoginSchema, forgotPasswordSchema, verifyOtpSchema, resetPasswordSchema } from "./validation.js"
 import { generateOtp } from "../../utils/otp.js"
 import { sendOtpEmail, sendVerificationOtpEmail, sendWelcomeEmail } from "./email.service.js"
 import { sendOtpSms, sendSms } from "./sms.service.js"
@@ -178,6 +178,43 @@ export async function login(req, res, next) {
         user: userResponse(user),
         token,
       },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+// Only these roles are eligible for the shared-device PIN/badge login — CUSTOMER/DRIVER/
+// PARTNER_API keep using email+password only.
+const PIN_LOGIN_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "FINANCE"]
+
+export async function pinLogin(req, res, next) {
+  try {
+    const data = pinLoginSchema.parse(req.body)
+
+    const user = await prisma.user.findUnique({ where: { badgeCode: data.badgeCode } })
+    if (!user || !user.pinCode) {
+      return res.status(401).json({ success: false, message: "Invalid badge or PIN." })
+    }
+    if (!PIN_LOGIN_ROLES.includes(user.role)) {
+      return res.status(403).json({ success: false, message: "This login method is for warehouse/operations staff only." })
+    }
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: "Account deactivated. Contact support." })
+    }
+
+    const isPinValid = await bcrypt.compare(data.pin, user.pinCode)
+    if (!isPinValid) {
+      return res.status(401).json({ success: false, message: "Invalid badge or PIN." })
+    }
+
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
+
+    const token = signToken(user.id)
+    return res.status(200).json({
+      success: true,
+      message: "Login successful.",
+      data: { user: userResponse(user), token },
     })
   } catch (error) {
     next(error)

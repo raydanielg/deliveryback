@@ -1,5 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
+import { emitToShipment } from "../../realtime/socket.js"
+import { computeCharges } from "../delivery-config/controller.js"
 import { receiveAtWarehouseSchema, verifyAndWeighSchema, assignShelfBinSchema, consolidateByRouteSchema, releaseShipmentSchema } from "./validation.js"
 
 function generateBarcode() {
@@ -148,9 +150,22 @@ export async function assignShelfBin(req, res, next) {
     const shipment = await prisma.shipment.findUnique({ where: { id: data.shipmentId } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
+    // Also resolve/create a structured ShelfLocation row (searchable/browsable board) at
+    // whichever station this shipment is currently sitting at, alongside the legacy
+    // free-text field kept for backward compatibility with existing callers.
+    let shelfLocation = null
+    const stationId = shipment.receivedAtStationId || shipment.stationId
+    if (stationId) {
+      shelfLocation = await prisma.shelfLocation.upsert({
+        where: { stationId_code: { stationId, code: data.shelfBinLocation } },
+        update: {},
+        create: { stationId, code: data.shelfBinLocation },
+      })
+    }
+
     const updated = await prisma.shipment.update({
       where: { id: data.shipmentId },
-      data: { shelfBinLocation: data.shelfBinLocation },
+      data: { shelfBinLocation: data.shelfBinLocation, shelfLocationId: shelfLocation?.id },
     })
 
     await prisma.trackingEvent.create({
@@ -161,6 +176,10 @@ export async function assignShelfBin(req, res, next) {
         description: `Assigned to shelf/bin: ${data.shelfBinLocation}`,
       },
     })
+
+    if (shelfLocation) {
+      emitToShipment(data.shipmentId, "shipment:shelf_assigned", { shipmentId: data.shipmentId, shelfLocationId: shelfLocation.id, code: shelfLocation.code })
+    }
 
     res.json({ success: true, data: updated, message: `Shipment assigned to ${data.shelfBinLocation}` })
   } catch (err) { next(err) }
@@ -199,11 +218,34 @@ export async function releaseShipment(req, res, next) {
   try {
     const data = releaseShipmentSchema.parse(req.body)
 
-    const shipment = await prisma.shipment.findUnique({ where: { id: data.shipmentId } })
+    const shipment = await prisma.shipment.findUnique({ where: { id: data.shipmentId }, include: { deliveryZone: true } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
     if (shipment.otp && data.otp && shipment.otp !== data.otp) {
       return res.status(400).json({ success: false, message: "Invalid OTP" })
+    }
+
+    // Payment-approval gate — only applies to shipments that opted into the Dubai<->TZ
+    // consolidation workflow (deliveryOption is set). A shipment with no deliveryOption is
+    // a generic/legacy release (road/rail/air) and keeps its original, ungated behavior.
+    // Free Tazara pickup that's already paid with no storage overage releases immediately;
+    // anything else needs an explicit APPROVED PaymentApproval on record first.
+    let requiresApproval = false
+    if (shipment.deliveryOption === "COLLECT_AT_TAZARA_FREE") {
+      const { totalCharges } = await computeCharges(shipment)
+      requiresApproval = totalCharges > 0 || shipment.paymentStatus !== "PAID"
+    } else if (shipment.deliveryOption) {
+      requiresApproval = true
+    }
+
+    if (requiresApproval) {
+      const approval = await prisma.paymentApproval.findFirst({
+        where: { shipmentId: data.shipmentId, approvalStatus: "APPROVED" },
+        orderBy: { createdAt: "desc" },
+      })
+      if (!approval) {
+        return res.status(400).json({ success: false, message: "Payment approval required before this shipment can be released" })
+      }
     }
 
     const updated = await prisma.shipment.update({
@@ -224,6 +266,9 @@ export async function releaseShipment(req, res, next) {
     })
 
     await triggerStatusNotification(data.shipmentId, "DELIVERED")
+    emitToShipment(data.shipmentId, "shipment:released", {
+      shipmentId: data.shipmentId, trackingNumber: shipment.trackingNumber, recipientName: data.recipientName, deliveredAt: updated.actualDelivery,
+    })
 
     res.json({ success: true, data: updated, message: "Shipment released to recipient" })
   } catch (err) { next(err) }

@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs"
 import prisma from "../../prisma/client.js"
-import { createUserSchema, updateUserSchema, changePasswordSchema } from "./validation.js"
+import { createUserSchema, updateUserSchema, changePasswordSchema, staffCredentialsSchema } from "./validation.js"
 
 export async function listUsers(req, res, next) {
   try {
@@ -180,6 +180,28 @@ export async function changePassword(req, res, next) {
     const hashedPassword = await bcrypt.hash(data.newPassword, 12)
     await prisma.user.update({ where: { id }, data: { password: hashedPassword } })
     res.json({ success: true, message: "Password changed successfully" })
+  } catch (err) { next(err) }
+}
+
+// Admin provisions a staff member's badge code + PIN for shared warehouse scanning
+// devices — same hashing convention as the password field.
+export async function setStaffCredentials(req, res, next) {
+  try {
+    const { id } = req.params
+    const data = staffCredentialsSchema.parse(req.body)
+
+    const user = await prisma.user.findUnique({ where: { id } })
+    if (!user) return res.status(404).json({ success: false, message: "User not found" })
+
+    const existingBadge = await prisma.user.findUnique({ where: { badgeCode: data.badgeCode } })
+    if (existingBadge && existingBadge.id !== id) {
+      return res.status(409).json({ success: false, message: "Badge code already assigned to another user" })
+    }
+
+    const hashedPin = await bcrypt.hash(data.pin, 12)
+    await prisma.user.update({ where: { id }, data: { badgeCode: data.badgeCode, pinCode: hashedPin } })
+
+    res.json({ success: true, message: "Staff PIN/badge credentials set" })
   } catch (err) { next(err) }
 }
 
