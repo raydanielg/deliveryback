@@ -24,6 +24,10 @@ model User {
   resetOtp      String?
   resetOtpExp   DateTime?
   lastLoginAt   DateTime?
+  // Staff quick-login for shared warehouse scanning devices (badge = who, PIN = secret),
+  // independent of email/password. Both optional — only provisioned for staff who need it.
+  pinCode       String?
+  badgeCode     String?   @unique
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -48,6 +52,13 @@ model User {
   tickets            SupportTicket[]  @relation("ticketsCreatedBy")
   ticketsAssigned    SupportTicket[]  @relation("ticketsAssignedTo")
   ticketReplies      TicketReply[]
+
+  // Dubai<->Tanzania consolidation workflow
+  packedBoxes          ConsolidationBox[] @relation("boxPackedBy")
+  boxItemsAdded        BoxItem[]          @relation("boxItemsAddedBy")
+  createdTripManifests TripManifest[]     @relation("tripManifestsCreatedBy")
+  requestedApprovals   PaymentApproval[]  @relation("paymentApprovalsRequestedBy")
+  approvedApprovals    PaymentApproval[]  @relation("paymentApprovalsApprovedBy")
 
   @@index([email])
   @@map("users")
@@ -851,6 +862,13 @@ model Shipment {
   weighedAt             DateTime?
   labeledAt             DateTime?
 
+  // Dubai<->Tanzania consolidation workflow fields
+  qrPayload             String?          @unique
+  deliveryOption        DeliveryOption?
+  deliveryZoneId        String?
+  storageStartAt        DateTime?        // free-storage clock start, set at TZ goods-received
+  shelfLocationId       String?
+
   isActive         Boolean          @default(true)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -902,6 +920,12 @@ model Shipment {
   sgrLegs          SGRLeg[]
   trainAllocations TrainAllocation[]
   whatsappMessages WhatsAppMessage[]
+
+  // Dubai<->Tanzania consolidation workflow relations
+  deliveryZone     DeliveryZone?    @relation(fields: [deliveryZoneId], references: [id])
+  shelfLocation    ShelfLocation?   @relation("shipmentShelfLocation", fields: [shelfLocationId], references: [id])
+  boxItems         BoxItem[]
+  paymentApprovals PaymentApproval[]
 
   // Station fields
   stationId        String?
@@ -1365,6 +1389,7 @@ model Invoice {
   updatedAt       DateTime @updatedAt
 
   order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentApprovals PaymentApproval[]
 
   @@map("invoices")
 }
@@ -1689,6 +1714,11 @@ model Station {
   trainAllocReceiving TrainAllocation[] @relation("trainAllocReceiving")
   sgrPricingOrigins  SGRPricing[] @relation("sgrPricingOrigin")
   sgrPricingDestinations SGRPricing[] @relation("sgrPricingDest")
+
+  // Dubai<->Tanzania consolidation workflow
+  shelfLocations     ShelfLocation[]
+  boxesOriginated    ConsolidationBox[] @relation("boxOriginStation")
+  boxesCurrentlyHere ConsolidationBox[] @relation("boxCurrentStation")
 
   @@map("stations")
 }
@@ -2858,5 +2888,232 @@ model Settlement {
 
   @@index([status])
   @@map("settlements")
+}
+
+// ============================================================
+// DUBAI <-> TANZANIA CONSOLIDATION, PASSENGER TRIP MANIFESTS,
+// SHELF LOCATIONS & PAYMENT APPROVAL
+//
+// Models the owner's real operational pipeline (Dubai Receiving ->
+// Consolidation_Boxes/Box_Contents -> Trip_Manifest -> Goods_Received_TZ ->
+// Warehouse_Management shelf tracking -> Payment_Approval -> Delivery_Register).
+// A ConsolidationBox/TripManifest is distinct from the existing driver+vehicle
+// Manifest/Trip models above, which model road/rail trips, not passenger-carried
+// baggage on a commercial flight.
+// ============================================================
+
+enum BoxStatus {
+  PACKING             // box opened at Dubai, items being scanned in
+  PACKED              // sealed, weight finalized, awaiting a passenger/trip
+  HANDED_TO_PASSENGER
+  DEPARTED
+  ARRIVED_TZ
+  SHELVED
+  BROKEN_DOWN         // contents released to individual shipment flow
+  LOST
+  DAMAGED
+}
+
+enum FlightDepartureStatus {
+  SCHEDULED
+  DEPARTED
+  DELAYED
+  CANCELLED
+}
+
+enum FlightArrivalStatus {
+  PENDING
+  ARRIVED
+  DELAYED
+}
+
+enum TripManifestStatus {
+  PLANNED
+  BOXES_ASSIGNED
+  DEPARTED
+  ARRIVED
+  RECONCILED
+  CANCELLED
+}
+
+// Exact customer choices from the operational Config_Lists sheet. Human-readable
+// labels ("Collect at Tazara - Free", etc.) live in a shared constant map on each
+// client/server (enum identifiers can't hold spaces/dashes) rather than in the enum.
+enum DeliveryOption {
+  COLLECT_AT_TAZARA_FREE
+  COLLECT_AT_OTHER_POINT_CHARGED
+  HOME_OFFICE_DELIVERY_CHARGED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ConsolidationBox {
+  id                     String    @id @default(cuid())
+  boxNumber              String    @unique
+  qrPayload              String    @unique
+  status                 BoxStatus @default(PACKING)
+  targetWeightKg         Decimal   @default(23) @db.Decimal(6, 2)
+  actualWeightKg         Decimal?  @db.Decimal(6, 2)
+  notes                  String?
+
+  packedById             String
+  originStationId        String
+  currentStationId       String?
+  currentShelfLocationId String?
+  tripManifestId         String?
+
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  packedBy               User             @relation("boxPackedBy", fields: [packedById], references: [id])
+  originStation          Station          @relation("boxOriginStation", fields: [originStationId], references: [id])
+  currentStation         Station?         @relation("boxCurrentStation", fields: [currentStationId], references: [id])
+  currentShelfLocation   ShelfLocation?   @relation(fields: [currentShelfLocationId], references: [id])
+  tripManifest           TripManifest?    @relation(fields: [tripManifestId], references: [id])
+  items                  BoxItem[]
+
+  @@index([status])
+  @@index([tripManifestId])
+  @@map("consolidation_boxes")
+}
+
+// Box_Contents equivalent — links each customer's shipment (tracking no) to a box.
+// Many shipments per box. A row is deleted (not soft-deleted) on correction; the
+// removal is recorded as a TrackingEvent on the shipment, matching how
+// packages/controller.js already logs scan corrections.
+model BoxItem {
+  id         String   @id @default(cuid())
+  boxId      String
+  shipmentId String
+  addedById  String
+  addedAt    DateTime @default(now())
+  notes      String?
+
+  box        ConsolidationBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  shipment   Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  addedBy    User             @relation("boxItemsAddedBy", fields: [addedById], references: [id])
+
+  @@unique([boxId, shipmentId])
+  @@index([shipmentId])
+  @@map("box_items")
+}
+
+// Structured shelf/rack/bin location. Complements (does not replace)
+// Shipment.shelfBinLocation, which stays as a free-text field for backward
+// compatibility with the existing warehouse module.
+model ShelfLocation {
+  id            String   @id @default(cuid())
+  stationId     String
+  code          String   // e.g. "A-03-B2"
+  rack          String?
+  shelfLevel    String?
+  bin           String?
+  capacityBoxes Int?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  station       Station            @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  boxes         ConsolidationBox[]
+  shipments     Shipment[]         @relation("shipmentShelfLocation")
+
+  @@unique([stationId, code])
+  @@map("shelf_locations")
+}
+
+// Trip_Manifest equivalent — a box handed to a named passenger travelling on a
+// commercial flight Dubai -> Tanzania (informal/MCO cargo, not airline freight).
+model TripManifest {
+  id                String                @id @default(cuid())
+  tripNo            String                @unique
+  qrPayload         String                @unique
+  passengerName     String
+  passengerPhone    String?
+  passengerIdNumber String?
+  airline           String
+  flightNumber      String
+  flightDate        DateTime
+  departureAirport  String
+  arrivalAirport    String
+  departureStatus   FlightDepartureStatus @default(SCHEDULED)
+  arrivalStatus     FlightArrivalStatus   @default(PENDING)
+  departedAt        DateTime?
+  arrivedAt         DateTime?
+  status            TripManifestStatus    @default(PLANNED)
+  notes             String?
+  createdById       String
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  createdBy         User               @relation("tripManifestsCreatedBy", fields: [createdById], references: [id])
+  boxes             ConsolidationBox[]
+
+  @@index([status])
+  @@index([flightDate])
+  @@map("trip_manifests")
+}
+
+// Flat-fee last-mile zone config from Config_Lists (Zone A/B/C + fee). Distinct
+// from the existing geography-tied pricing `Zone` model used elsewhere.
+model DeliveryZone {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  code      String?    @unique
+  feeAmount Decimal    @db.Decimal(12, 2)
+  currency  String     @default("TZS")
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  shipments Shipment[]
+
+  @@map("delivery_zones")
+}
+
+// Single-row DB-persisted config (storage rate/day, free days, default box target
+// weight) driving customer invoices. Replaces relying on the existing in-memory
+// settings/controller.js state, which resets on server restart.
+model ConsolidationSettings {
+  id                   String   @id @default(cuid())
+  storageRatePerDayTzs Decimal  @default(2000) @db.Decimal(10, 2)
+  freeStorageDays      Int      @default(3)
+  defaultBoxTargetKg   Decimal  @default(23) @db.Decimal(6, 2)
+  updatedById          String?
+  updatedAt            DateTime @updatedAt
+
+  @@map("consolidation_settings")
+}
+
+// Approval gate before a shipment can be released, reusing the existing Invoice
+// model and PaymentStatus enum rather than duplicating invoice fields.
+model PaymentApproval {
+  id              String         @id @default(cuid())
+  shipmentId      String
+  invoiceId       String?
+  storageCharge   Decimal        @default(0) @db.Decimal(12, 2)
+  deliveryFee     Decimal        @default(0) @db.Decimal(12, 2)
+  otherCharges    Decimal        @default(0) @db.Decimal(12, 2)
+  totalCharges    Decimal        @db.Decimal(12, 2)
+  paymentStatus   PaymentStatus  @default(PENDING)
+  approvalStatus  ApprovalStatus @default(PENDING)
+  requestedById   String
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  shipment        Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+  requestedBy     User     @relation("paymentApprovalsRequestedBy", fields: [requestedById], references: [id])
+  approvedBy      User?    @relation("paymentApprovalsApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([approvalStatus])
+  @@index([shipmentId])
+  @@map("payment_approvals")
 }
 
