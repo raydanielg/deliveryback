@@ -9,7 +9,7 @@ dotenv.config()
 
 const PORT = process.env.PORT || 4000
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, process.env.BIND_ADDRESS || "0.0.0.0", () => {
   console.log(`\n[Delivery Option API] Server running on port ${PORT}`)
   console.log(`[Delivery Option API] Health check: http://localhost:${PORT}/health`)
   console.log(`[Delivery Option API] Auth routes: http://localhost:${PORT}/api/auth`)

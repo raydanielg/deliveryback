@@ -66,21 +66,39 @@ import { initWhatsAppEventIntegration } from "./modules/whatsapp/event-integrati
 import { listAuditLogs } from "./middleware/audit-logger.js"
 import { authenticate, authorizeRoles } from "./middleware/auth.js"
 import { errorHandler, notFound } from "./middleware/errorHandler.js"
-import { verifyEmailConnection } from "./modules/auth/email.service.js"
+import { verifyEmailConnection, sendAccountDeletionRequest } from "./modules/auth/email.service.js"
 import { sendSms } from "./modules/auth/sms.service.js"
-import { apiLimiter } from "./middleware/rate-limit.js"
+import { apiLimiter, adminLimiter, paymentLimiter } from "./middleware/rate-limit.js"
 
 dotenv.config()
 
 const app = express()
 
+app.disable("x-powered-by")
 app.set("trust proxy", 1)
+
+const isProduction = process.env.NODE_ENV === "production"
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
 
 app.use(
   cors({
-    origin: true,
+    origin: isProduction
+      ? (origin, cb) => {
+          if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
+          cb(new Error("Not allowed by CORS"))
+        }
+      : true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+      "Origin",
+    ],
     exposedHeaders: ["Content-Range", "X-Content-Range"],
     credentials: true,
     maxAge: 86400,
@@ -91,7 +109,7 @@ app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
     contentSecurityPolicy: false,
-    strictTransportSecurity: false,
+    strictTransportSecurity: isProduction ? { maxAge: 86400 } : false,
   })
 )
 // Capture the raw request body alongside the parsed one so webhook handlers
@@ -159,7 +177,15 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 
 // Baseline rate limit across the whole API — previously only /api/v1/auth had any request
 // throttling, leaving every other endpoint (including unauthenticated ones) unprotected.
+// This is a generous baseline (dashboards legitimately poll/list a lot); it's a backstop
+// against abuse and scraping, not meant to constrain normal usage.
 app.use("/api/v1", apiLimiter)
+
+// Tighter rate limits for payment and admin surfaces.
+app.use("/api/v1/payments", paymentLimiter)
+app.use("/api/v1/payment-approvals", paymentLimiter)
+app.use("/api/v1/users", adminLimiter)
+app.use("/api/v1/settings", adminLimiter)
 
 app.use("/api/v1/auth", authRoutes)
 app.use("/api/v1/pricing", pricingRoutes)
@@ -216,6 +242,57 @@ app.use("/api/v1/cargo-intake", cargoIntakeRoutes)
 app.use("/api/v1/delivery-config", deliveryConfigRoutes)
 app.use("/api/v1/payment-approvals", paymentApprovalsRoutes)
 app.use("/api/v1/scan", scanRoutes)
+
+// Data deletion information page for Google Play Data safety form
+app.get("/data-deletion", (req, res) => {
+  res.setHeader("Content-Type", "text/html")
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xerin Express - Data & Account Deletion</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 720px; margin: 2rem auto; padding: 1rem; color: #111; }
+    h1 { color: #0f4c81; }
+    a { color: #0f4c81; }
+  </style>
+</head>
+<body>
+  <h1>Xerin Express — Data & Account Deletion</h1>
+  <p>If you would like to delete your Xerin Express account and all associated personal data, you can request deletion at any time.</p>
+  <h2>How to request deletion</h2>
+  <ul>
+    <li>Email us at <a href="mailto:support@xerinexpress.com">support@xerinexpress.com</a> with the subject "Account Deletion Request" and include the email address or phone number associated with your account.</li>
+    <li>Our support team will process your request within 30 days and send you a confirmation once your data has been deleted.</li>
+  </ul>
+  <h2>What data is deleted</h2>
+  <p>Upon confirmation, we delete your profile information, addresses, saved shipment history, payment tokens, and other personal data linked to your account.</p>
+  <h2>Data we may retain</h2>
+  <p>We may retain certain records for legal, tax, fraud-prevention, or regulatory purposes for as long as required by applicable law. This retained data is not used to identify or contact you.</p>
+  <p><strong>Last updated:</strong> ${new Date().toISOString().split("T")[0]}</p>
+</body>
+</html>`)
+})
+
+// Public account deletion request endpoint (required by Google Play Data safety)
+app.post("/api/v1/account-deletion", async (req, res, next) => {
+  try {
+    const { email, phone = "", reason = "" } = req.body
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, message: "A valid email address is required" })
+    }
+
+    await sendAccountDeletionRequest(email, reason)
+    res.status(200).json({
+      success: true,
+      message: "Your account deletion request has been received. Our support team will contact you within 30 days.",
+    })
+  } catch (err) {
+    next(err)
+  }
+})
 
 // Audit logs
 app.get("/api/v1/audit-logs", authenticate, authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listAuditLogs)

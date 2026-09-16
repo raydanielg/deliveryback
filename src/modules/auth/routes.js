@@ -1,5 +1,4 @@
 import { Router } from "express"
-import rateLimit from "express-rate-limit"
 import multer from "multer"
 import {
   register,
@@ -13,6 +12,11 @@ import {
   resetPassword,
 } from "./controller.js"
 import { authenticate } from "../../middleware/auth.js"
+import {
+  loginLimiter,
+  otpLimiter,
+  passwordResetLimiter,
+} from "../../middleware/rate-limit.js"
 import { getRolePermissions, PERMISSIONS, ROLE_LABELS, ALL_ROLES } from "../../middleware/permissions.js"
 
 const upload = multer({
@@ -22,27 +26,6 @@ const upload = multer({
 
 const router = Router()
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: {
-    success: false,
-    message: "Too many requests. Please try again later.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-})
-
-const otpLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: {
-    success: false,
-    message: "Too many OTP requests. Please try again later.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-})
 
 /**
  * @swagger
@@ -80,7 +63,7 @@ const otpLimiter = rateLimit({
  *       429:
  *         description: Too many requests - rate limit exceeded
  */
-router.post("/register", authLimiter, register)
+router.post("/register", loginLimiter, register)
 
 /**
  * @swagger
@@ -115,7 +98,7 @@ router.post("/register", authLimiter, register)
  *       429:
  *         description: Too many requests - rate limit exceeded
  */
-router.post("/login", authLimiter, login)
+router.post("/login", loginLimiter, login)
 
 /**
  * @swagger
@@ -144,7 +127,7 @@ router.post("/login", authLimiter, login)
  *       429:
  *         description: Too many requests - rate limit exceeded
  */
-router.post("/pin-login", authLimiter, pinLogin)
+router.post("/pin-login", loginLimiter, pinLogin)
 
 /**
  * @swagger
@@ -264,7 +247,7 @@ router.put("/profile", authenticate, upload.single("avatar"), updateProfile)
  *       429:
  *         description: Too many OTP requests - rate limit exceeded
  */
-router.post("/forgot-password", otpLimiter, forgotPassword)
+router.post("/forgot-password", passwordResetLimiter, forgotPassword)
 
 /**
  * @swagger
@@ -325,7 +308,7 @@ router.post("/verify-otp", otpLimiter, verifyOtp)
  *       429:
  *         description: Too many requests - rate limit exceeded
  */
-router.post("/reset-password", authLimiter, resetPassword)
+router.post("/reset-password", passwordResetLimiter, resetPassword)
 
 /**
  * @swagger

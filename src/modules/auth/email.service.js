@@ -111,6 +111,28 @@ export async function sendVerificationOtpEmail(email, otp, name) {
   return info
 }
 
+export async function sendAccountDeletionRequest(userEmail, reason = "") {
+  const transport = getTransporter()
+
+  const mailOptions = {
+    from: process.env.SMTP_FROM || "Xerin Express <contact@neg.co.tz>",
+    to: process.env.SUPPORT_EMAIL || "support@xerinexpress.com",
+    subject: "Account Deletion Request - Xerin Express",
+    html: EMAIL_WRAPPER(`
+      <h2 style="color: #1a1a1a; font-size: 20px; margin: 0 0 16px 0;">Account Deletion Request</h2>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;">A user has requested account deletion.</p>
+      <p style="color: #555; font-size: 15px; line-height: 1.6;"><strong>Email:</strong> ${userEmail}</p>
+      ${reason ? `<p style="color: #555; font-size: 15px; line-height: 1.6;"><strong>Reason:</strong> ${reason}</p>` : ""}
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">Please process this request within 30 days and confirm once completed.</p>
+    `),
+  }
+
+  console.log(`[EMAIL] Sending account deletion request from: ${userEmail}`)
+  const info = await transport.sendMail(mailOptions)
+  console.log(`[EMAIL] Account deletion request sent. MessageId: ${info.messageId}`)
+  return info
+}
+
 export async function sendWelcomeEmail(email, name) {
   const transport = getTransporter()
 
