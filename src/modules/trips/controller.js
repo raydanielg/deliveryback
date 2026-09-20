@@ -1,4 +1,5 @@
 import prisma from "../../prisma/client.js"
+import { checkHandoverProof, HandoverError } from "../../utils/handover.js"
 import { generateTripNumber, calculateSettlement } from "../transport/service.js"
 import { createNotification } from "../notifications/controller.js"
 import { emitEvent, EVENTS } from "../integrations/event-bus.js"
@@ -542,9 +543,10 @@ export async function deliverTrip(req, res, next) {
       return res.status(400).json({ success: false, message: `Cannot deliver from status ${trip.status}` })
     }
 
-    // Verify delivery OTP if shipment has one
-    if (trip.shipment.otp && otp && otp !== trip.shipment.otp) {
-      return res.status(400).json({ success: false, message: "Invalid delivery OTP" })
+    // The receiver's code is mandatory: a driver on the road has no counter to check an ID at.
+    try { checkHandoverProof(trip.shipment, { otp }) } catch (e) {
+      if (e instanceof HandoverError) return res.status(400).json({ success: false, message: e.message })
+      throw e
     }
 
     await prisma.$transaction(async (tx) => {
@@ -755,7 +757,7 @@ export async function raiseException(req, res, next) {
 
     // Notify dispatchers
     const dispatchers = await prisma.user.findMany({
-      where: { role: { in: ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"] }, isActive: true },
+      where: { role: { in: ["SUPER_ADMIN", "OPERATIONS_MANAGER"] }, isActive: true },
     })
     for (const d of dispatchers) {
       await createNotification(d.id, "TRIP_EXCEPTION", "Trip Exception Raised", `${type}: ${reason}`, { tripId: id, exceptionId: exception.id })

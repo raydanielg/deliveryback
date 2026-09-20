@@ -27,7 +27,10 @@ export async function calculateTransportRequirement(shipment) {
   const fromCountry = shipment.fromAddress?.country || "Tanzania"
   const toCountry = shipment.toAddress?.country || "Tanzania"
 
-  const rec = recommendTransportMode({
+  // Dispatch works on shipments that were already accepted: a destination blocked afterwards, or an
+  // old free-text address, must not stop the job being dispatched — so soft mode, blocks ignored.
+  const rec = await recommendTransportMode({
+    soft: true, ignoreBlocks: true,
     weightKg: chargeableWeight,
     lengthCm: shipment.lengthCm,
     widthCm: shipment.widthCm,

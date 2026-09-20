@@ -29,7 +29,7 @@ router.use(authenticate)
 // Staff-only — the admin dashboard's international-shipments view is the only caller
 // (no customer-app usage of this module); previously had no role check at all and
 // exposed declared value/HS code/documents for any shipment by id.
-const CUSTOMS_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER"]
+const CUSTOMS_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 router.get("/:shipmentId", authorizeRoles(...CUSTOMS_STAFF), getCustomsDeclaration)
 
 /**
@@ -91,6 +91,6 @@ router.post("/", authorizeRoles(...CUSTOMS_STAFF), createCustomsDeclaration)
  *       404:
  *         description: Declaration not found
  */
-router.put("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER"), updateCustomsStatus)
+router.put("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateCustomsStatus)
 
 export default router

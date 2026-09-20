@@ -1,7 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { scanPackageSchema } from "./validation.js"
 
-const PACKAGE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "CUSTOMER_SUPPORT"]
+const PACKAGE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"]
 
 // Shared ownership check for CUSTOMER/DRIVER against the shipment a package belongs to —
 // mirrors the pattern already used in shipments.getShipment. Returns true if allowed.

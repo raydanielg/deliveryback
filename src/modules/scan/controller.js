@@ -1,7 +1,7 @@
 import prisma from "../../prisma/client.js"
 
-const WAREHOUSE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"]
-const BROAD_STAFF = [...WAREHOUSE_STAFF, "SGR_STATION_OFFICER", "CUSTOMER_SUPPORT", "FINANCE"]
+const WAREHOUSE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"]
+const BROAD_STAFF = [...WAREHOUSE_STAFF, "WAREHOUSE_MANAGER", "OPERATIONS_MANAGER", "FINANCE"]
 
 // Mirrors packages/controller.js's canAccessShipment — a customer/driver only ever sees
 // their own shipment through a scan, everyone else on staff can see any of them.

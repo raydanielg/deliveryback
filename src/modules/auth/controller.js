@@ -24,6 +24,8 @@ function userResponse(user) {
     phone: user.phone,
     role: user.role,
     avatar: user.avatar,
+    branchId: user.branchId ?? null,
+    agentKind: user.agentKind ?? null,
     isVerified: user.isVerified,
     isActive: user.isActive,
   }
@@ -186,7 +188,7 @@ export async function login(req, res, next) {
 
 // Only these roles are eligible for the shared-device PIN/badge login — CUSTOMER/DRIVER/
 // PARTNER_API keep using email+password only.
-const PIN_LOGIN_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "FINANCE"]
+const PIN_LOGIN_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER", "FINANCE"]
 
 export async function pinLogin(req, res, next) {
   try {

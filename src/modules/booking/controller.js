@@ -2,8 +2,8 @@ import prisma from "../../prisma/client.js"
 import { universalBookingSchema, recommendModeSchema, bulkBookingSchema } from "./validation.js"
 import { recommendTransportMode, getQuotesForRecommendations, generateBookingReference } from "./service.js"
 import { calculateVolumetricWeight, getChargeableWeight, calculateQuote } from "../pricing/service.js"
-import { triggerStatusNotification } from "../notification-service/controller.js"
-import { createNotification } from "../notifications/controller.js"
+import { findBranchForCity } from "../../utils/branch-scope.js"
+import { sendBookingMessages } from "../notification-service/booking-messages.js"
 import { logAction } from "../../middleware/audit-logger.js"
 
 function generateOrderNumber() {
@@ -27,7 +27,7 @@ function generateOtp() {
 export async function recommendMode(req, res, next) {
   try {
     const data = recommendModeSchema.parse(req.body)
-    const result = recommendTransportMode(data)
+    const result = await recommendTransportMode(data)
 
     // Also fetch pricing quotes for each recommendation
     const quotes = await getQuotesForRecommendations({
@@ -42,6 +42,9 @@ export async function recommendMode(req, res, next) {
       widthCm: data.widthCm,
       heightCm: data.heightCm,
       serviceLevel: data.serviceLevel || "STANDARD",
+      originAirport: data.originAirport, destinationAirport: data.destinationAirport,
+      originLatitude: data.originLatitude, originLongitude: data.originLongitude,
+      destinationLatitude: data.destinationLatitude, destinationLongitude: data.destinationLongitude,
     })
 
     res.json({
@@ -70,7 +73,10 @@ export async function createBooking(req, res, next) {
 
     if (!transportMode) {
       // Auto-recommend mode
-      const rec = recommendTransportMode({
+      const rec = await recommendTransportMode({
+        originAirport: data.originAirport, destinationAirport: data.destinationAirport,
+        originLatitude: data.fromAddress.latitude, originLongitude: data.fromAddress.longitude,
+        destinationLatitude: data.toAddress.latitude, destinationLongitude: data.toAddress.longitude,
         weightKg: data.weightKg,
         lengthCm: data.lengthCm,
         widthCm: data.widthCm,
@@ -110,6 +116,10 @@ export async function createBooking(req, res, next) {
       heightCm: data.heightCm,
       insuranceEnabled: data.insuranceEnabled,
       declaredValue: data.cargoValue || 0,
+      vehicleCategory,
+      originAirport: data.originAirport, destinationAirport: data.destinationAirport,
+      originLatitude: data.fromAddress.latitude, originLongitude: data.fromAddress.longitude,
+      destinationLatitude: data.toAddress.latitude, destinationLongitude: data.toAddress.longitude,
     })
 
     if (quoteResult.requiresCustomQuote) {
@@ -171,6 +181,8 @@ export async function createBooking(req, res, next) {
       scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
       otp: generateOtp(),
       isParcelDeliveryProofEnabled: true,
+      // The customer is told this arrival window; it comes straight from the vehicle's rate card.
+      estimatedDelivery: quoteResult.etaHours ? new Date(Date.now() + quoteResult.etaHours.max * 3600 * 1000) : null,
     }
 
     // Add SGR fields if rail
@@ -187,6 +199,14 @@ export async function createBooking(req, res, next) {
       shipmentData.airportDestination = data.destinationAirport
       shipmentData.cargoType = data.commodityType || (data.perishable ? "PERISHABLE" : data.dangerousGoodsDeclared ? "DANGEROUS" : "GENERAL")
     }
+
+    // Which branches handle it: where it starts and where it ends.
+    const [originBranchId, destinationBranchId] = await Promise.all([
+      findBranchForCity(data.fromAddress.city, data.fromAddress.region),
+      findBranchForCity(data.toAddress.city, data.toAddress.region),
+    ])
+    shipmentData.originBranchId = originBranchId
+    shipmentData.destinationBranchId = destinationBranchId
 
     // Link customer if exists
     const customer = await prisma.customer.findFirst({
@@ -247,13 +267,9 @@ export async function createBooking(req, res, next) {
       },
     })
 
-    // Send notification
-    try {
-      await triggerStatusNotification(shipment.id, "BOOKED")
-      await createNotification(req.user.id, "BOOKING_CONFIRMED", "Booking Confirmed", `Your shipment ${trackingNumber} has been booked successfully.`)
-    } catch (e) {
-      // Non-blocking
-    }
+    // Tell the sender and the receiver (tracking code, arrival window, receiver's confirmation code).
+    // Never blocks the booking — every channel is best-effort.
+    sendBookingMessages(shipment.id, { etaLabel: quoteResult.etaLabel }).catch((e) => console.error("[BOOKING] messages failed:", e.message))
 
     // Audit log
     await logAction({
@@ -328,7 +344,7 @@ export async function bulkBooking(req, res, next) {
         let vehicleCategory = bookingData.vehicleCategory
 
         if (!transportMode) {
-          const rec = recommendTransportMode({
+          const rec = await recommendTransportMode({
             weightKg: bookingData.weightKg,
             lengthCm: bookingData.lengthCm,
             widthCm: bookingData.widthCm,

@@ -177,6 +177,70 @@ async function seedDemoUsers() {
   const bcrypt = await import("bcryptjs")
   const demoPassword = await bcrypt.hash("DemoPass123!", 12)
 
+  // One demo login per staff role — all share password DemoPass123!
+  const demoStaff = [
+    { role: "SUPER_ADMIN", name: "Super Admin", email: "admin@demo.xerin" },
+    { role: "OPERATIONS_MANAGER", name: "Ops Manager", email: "ops@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "SGR Officer", email: "sgr@demo.xerin" },
+    { role: "OPERATIONS_MANAGER", name: "Dispatcher", email: "dispatch@demo.xerin" },
+    { role: "FINANCE", name: "Finance Officer", email: "finance@demo.xerin" },
+    { role: "OPERATIONS_MANAGER", name: "Support Agent", email: "support@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "Warehouse Manager", email: "whmanager@demo.xerin" },
+    { role: "OPERATIONS_MANAGER", name: "Customs Officer", email: "customs@demo.xerin" },
+    { role: "FINANCE", name: "Pricing Manager", email: "pricing@demo.xerin" },
+    { role: "FINANCE", name: "Report Viewer", email: "reports@demo.xerin" },
+    { role: "DRIVER", name: "Demo Driver", email: "driver@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "Dubai Receiving", email: "dubai@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "Consolidation Officer", email: "consolidation@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "Trip Coordinator", email: "trips@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "TZ Receiving", email: "tzreceiving@demo.xerin" },
+    { role: "WAREHOUSE_MANAGER", name: "Warehouse Officer", email: "whofficer@demo.xerin" },
+    { role: "FINANCE", name: "Accountant", email: "accountant@demo.xerin" },
+    { role: "FINANCE", name: "Finance Approver", email: "approver@demo.xerin" },
+  ]
+
+  // Find a free phone number — the users.phone column is unique and other
+  // seeds/registrations may already occupy parts of the +25571 range.
+  let phoneSeq = 300
+  async function nextFreePhone() {
+    while (await prisma.user.findUnique({ where: { phone: tzPhone(phoneSeq) } })) phoneSeq++
+    return tzPhone(phoneSeq++)
+  }
+
+  let staffCreated = 0
+  for (let i = 0; i < demoStaff.length; i++) {
+    const s = demoStaff[i]
+    const exists = await prisma.user.findUnique({ where: { email: s.email } })
+    if (exists) continue
+
+    const user = await prisma.user.create({
+      data: {
+        name: s.name,
+        email: s.email,
+        password: demoPassword,
+        phone: await nextFreePhone(),
+        role: s.role,
+        isVerified: true,
+      },
+    })
+    staffCreated++
+
+    // DRIVER needs a linked Driver profile to appear in dispatch / receive deliveries
+    if (s.role === "DRIVER") {
+      await prisma.driver.create({
+        data: {
+          userId: user.id,
+          licenseNumber: "DEMO-DL-0001",
+          licenseClass: "B",
+          employmentType: "EMPLOYEE",
+          status: "AVAILABLE",
+          approvalStatus: "ACTIVE",
+        },
+      })
+    }
+  }
+  console.log(`Seeded ${staffCreated} demo staff users (skipped existing)`)
+
   const demoCustomers = [
     { name: "Juma Khamis", email: "juma@demo.xerin" },
     { name: "Asha Mwinyi", email: "asha@demo.xerin" },
@@ -195,7 +259,7 @@ async function seedDemoUsers() {
         name: c.name,
         email: c.email,
         password: demoPassword,
-        phone: tzPhone(i + 200),
+        phone: await nextFreePhone(),
         role: "CUSTOMER",
         isVerified: true,
       },

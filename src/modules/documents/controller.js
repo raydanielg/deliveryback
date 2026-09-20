@@ -16,7 +16,7 @@ const uploadDocumentSchema = z.object({
   mimeType: z.string().optional(),
 })
 
-const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER", "CUSTOMER_SUPPORT", "WAREHOUSE_MANAGER", "DISPATCHER"]
+const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"]
 
 export async function listDocuments(req, res, next) {
   try {

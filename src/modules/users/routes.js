@@ -94,7 +94,7 @@ router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getUser)
  *               email: { type: string, format: email }
  *               phone: { type: string }
  *               password: { type: string, minLength: 8 }
- *               role: { type: string, enum: [SUPER_ADMIN, OPERATIONS_MANAGER, DISPATCHER, FINANCE, CUSTOMER_SUPPORT, WAREHOUSE_MANAGER, CUSTOMS_OFFICER, REPORT_VIEWER, CUSTOMER, DRIVER] }
+ *               role: { type: string, enum: [SUPER_ADMIN, OPERATIONS_MANAGER, FINANCE, WAREHOUSE_MANAGER, BRANCH_MANAGER, AGENT, CUSTOMER, DRIVER] }
  *               isActive: { type: boolean, default: true }
  *     responses:
  *       201:
@@ -197,7 +197,7 @@ router.patch("/:id/toggle", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"),
  *             type: object
  *             required: [role]
  *             properties:
- *               role: { type: string, enum: [SUPER_ADMIN, OPERATIONS_MANAGER, DISPATCHER, FINANCE, CUSTOMER_SUPPORT, WAREHOUSE_MANAGER, CUSTOMS_OFFICER, REPORT_VIEWER, CUSTOMER, DRIVER] }
+ *               role: { type: string, enum: [SUPER_ADMIN, OPERATIONS_MANAGER, FINANCE, WAREHOUSE_MANAGER, BRANCH_MANAGER, AGENT, CUSTOMER, DRIVER] }
  *     responses:
  *       200:
  *         description: Role updated

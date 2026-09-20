@@ -1,146 +1,54 @@
 import prisma from "../../prisma/client.js"
 import { calculateVolumetricWeight, getChargeableWeight, calculateQuote, generateMultipleQuotes } from "../pricing/service.js"
+import { estimateOptions, LogisticsError } from "../logistics/service.js"
 
 /**
- * Intelligent Transport Mode Recommendation
- * Uses weight + dimensions + route + service requirement to recommend transport
+ * Transport recommendation, driven by the vehicle-class catalog (weight limits, distance limits,
+ * speeds, rates) and destination data in the database — Super Admin edits those, not this file.
+ * Returns every eligible option cheapest-first, plus the ones ruled out and why.
  */
-export function recommendTransportMode(params) {
-  const { weightKg, lengthCm, widthCm, heightCm, originCity, destinationCity, originCountry, destCountry, cargoType, serviceLevel } = params
+export async function recommendTransportMode(params) {
+  const { weightKg, lengthCm, widthCm, heightCm, originCity, destinationCity, originCountry, destCountry, serviceLevel } = params
 
-  const isInternational = originCountry.toLowerCase() !== destCountry.toLowerCase()
-  const isSameCity = originCity.toLowerCase() === destinationCity.toLowerCase()
   const volumetricWeight = calculateVolumetricWeight(lengthCm, widthCm, heightCm)
   const chargeableWeight = getChargeableWeight(weightKg, volumetricWeight)
+  const volumeM3 = lengthCm && widthCm && heightCm ? (lengthCm * widthCm * heightCm) / 1e6 : undefined
+  const isInternational = (originCountry || "").toLowerCase() !== (destCountry || "").toLowerCase()
+  const isSameCity = (originCity || "").toLowerCase() === (destinationCity || "").toLowerCase()
 
-  const recommendations = []
-
-  // INTERNATIONAL shipments
-  if (isInternational) {
-    // Air cargo for international
-    recommendations.push({
-      transportMode: "AIR",
-      vehicleCategory: "AIR_CARGO",
-      reason: "International shipment - Air Cargo is the fastest and most reliable option",
-      estimatedDays: "1-3 days",
-      confidence: "HIGH",
+  const base = { recommendations: [], excluded: [], chargeableWeight, volumetricWeight, isInternational, isSameCity }
+  try {
+    const result = await estimateOptions({
+      origin: { city: originCity, country: originCountry, airportIata: params.originAirport, latitude: params.originLatitude, longitude: params.originLongitude },
+      destination: { city: destinationCity, country: destCountry, airportIata: params.destinationAirport, latitude: params.destinationLatitude, longitude: params.destinationLongitude },
+      weightKg, chargeableKg: chargeableWeight, volumeM3, serviceLevel: serviceLevel || "STANDARD", ignoreBlocks: params.ignoreBlocks,
     })
-
-    // Sea for very heavy international cargo
-    if (chargeableWeight > 500) {
-      recommendations.push({
-        transportMode: "SEA",
-        vehicleCategory: "CONTAINER",
-        reason: "Heavy international cargo - Sea freight is more cost-effective for large shipments",
-        estimatedDays: "14-30 days",
-        confidence: "MEDIUM",
-      })
-    }
-
-    // Road for neighboring countries
-    if (isNeighboringCountry(originCountry, destCountry)) {
-      recommendations.push({
-        transportMode: "ROAD",
-        vehicleCategory: chargeableWeight > 3000 ? "TRUCK" : chargeableWeight > 500 ? "PICKUP" : "VAN",
-        reason: "Cross-border road transport available for neighboring countries",
-        estimatedDays: "2-5 days",
-        confidence: "MEDIUM",
-      })
-    }
-
-    return { recommendations, chargeableWeight, volumetricWeight, isInternational, isSameCity }
+    const cheapest = result.options[0]?.price
+    const fastest = [...result.options].sort((x, y) => x.eta.maxHours - y.eta.maxHours)[0]
+    base.recommendations = result.options.map((o, i) => ({
+      transportMode: o.transportMode,
+      // Fleet vehicle type for road (what dispatch matches against), class code for air/rail/sea.
+      vehicleCategory: o.vehicleClass.vehicleType || o.vehicleClass.code,
+      vehicleClassCode: o.vehicleClass.code,
+      vehicleClassName: o.vehicleClass.name,
+      vehicleClassNameSw: o.vehicleClass.nameSw,
+      reason: `${o.vehicleClass.name}: ${o.distanceKm} km, ${o.eta.labelEn.toLowerCase()}${o.price === cheapest ? " — best price" : ""}${o === fastest && o.price !== cheapest ? " — fastest" : ""}`,
+      distanceKm: o.distanceKm,
+      estimatedDays: o.eta.labelEn,
+      estimatedDaysSw: o.eta.labelSw,
+      etaHours: { min: o.eta.minHours, max: o.eta.maxHours },
+      multiDay: o.eta.multiDay,
+      indicativePrice: o.price,
+      tags: [o.price === cheapest && "BEST_PRICE", o === fastest && "FASTEST"].filter(Boolean),
+      confidence: i === 0 ? "HIGH" : "MEDIUM",
+    }))
+    base.excluded = result.excluded
+  } catch (err) {
+    // Blocked / unlisted places must reach the caller of a booking; internal callers (dispatch) opt in to soft mode.
+    if (!(err instanceof LogisticsError) || !params.soft) throw err
+    base.error = err.message
   }
-
-  // DOMESTIC shipments
-  // 2kg or less - Boda
-  if (chargeableWeight <= 2) {
-    recommendations.push({
-      transportMode: "ROAD",
-      vehicleCategory: "MOTORCYCLE",
-      reason: "Light package (≤2kg) - Boda Boda is the fastest and most economical option",
-      estimatedDays: serviceLevel === "EXPRESS" || serviceLevel === "SAME_DAY" ? "Same day" : "1-2 hours",
-      confidence: "HIGH",
-    })
-  }
-
-  // 2-80kg - Car or Van
-  if (chargeableWeight > 2 && chargeableWeight <= 80) {
-    recommendations.push({
-      transportMode: "ROAD",
-      vehicleCategory: chargeableWeight <= 20 ? "CAR" : "VAN",
-      reason: `Medium package (${chargeableWeight}kg) - ${chargeableWeight <= 20 ? "Car" : "Van/Kirikuu"} is recommended`,
-      estimatedDays: serviceLevel === "EXPRESS" || serviceLevel === "SAME_DAY" ? "Same day" : "1-2 days",
-      confidence: "HIGH",
-    })
-  }
-
-  // 80-700kg - Pickup or Van
-  if (chargeableWeight > 80 && chargeableWeight <= 700) {
-    recommendations.push({
-      transportMode: "ROAD",
-      vehicleCategory: "PICKUP",
-      reason: `Heavy cargo (${chargeableWeight}kg) - Pickup truck recommended for this weight range`,
-      estimatedDays: serviceLevel === "EXPRESS" ? "Same day" : "1-3 days",
-      confidence: "HIGH",
-    })
-  }
-
-  // 700-5000kg - Truck
-  if (chargeableWeight > 700 && chargeableWeight <= 5000) {
-    recommendations.push({
-      transportMode: "ROAD",
-      vehicleCategory: "TRUCK",
-      reason: `Commercial cargo (${chargeableWeight}kg) - Commercial truck required`,
-      estimatedDays: "1-3 days",
-      confidence: "HIGH",
-    })
-  }
-
-  // 5000kg+ - Large Truck/Trailer
-  if (chargeableWeight > 5000) {
-    recommendations.push({
-      transportMode: "ROAD",
-      vehicleCategory: "TRAILER",
-      reason: `Heavy cargo (${chargeableWeight}kg) - Large truck or trailer required`,
-      estimatedDays: "2-5 days",
-      confidence: "HIGH",
-    })
-  }
-
-  // SGR Rail option for domestic intercity
-  if (!isSameCity && isSGRAvailable(originCity, destinationCity)) {
-    recommendations.push({
-      transportMode: "RAIL",
-      vehicleCategory: "SGR_PARCEL",
-      reason: `SGR Parcel Service available from ${originCity} to ${destinationCity} - cost-effective for intercity transport`,
-      estimatedDays: "1-2 days",
-      confidence: "MEDIUM",
-    })
-  }
-
-  // Sort by confidence (HIGH first)
-  const confidenceOrder = { HIGH: 0, MEDIUM: 1, LOW: 2 }
-  recommendations.sort((a, b) => confidenceOrder[a.confidence] - confidenceOrder[b.confidence])
-
-  return { recommendations, chargeableWeight, volumetricWeight, isInternational, isSameCity }
-}
-
-function isNeighboringCountry(origin, dest) {
-  const neighbors = {
-    "tanzania": ["kenya", "uganda", "rwanda", "burundi", "zambia", "malawi", "mozambique", "dr congo", "congo"],
-    "kenya": ["tanzania", "uganda", "ethiopia", "somalia", "south sudan"],
-    "uganda": ["tanzania", "kenya", "rwanda", "south sudan", "dr congo"],
-  }
-  const originLower = origin.toLowerCase()
-  const destLower = dest.toLowerCase()
-  return neighbors[originLower]?.includes(destLower) || neighbors[destLower]?.includes(originLower) || false
-}
-
-function isSGRAvailable(originCity, destCity) {
-  const sgrCities = ["dar es salaam", "morogoro", "dodoma", "makutupora"]
-  const originLower = originCity.toLowerCase()
-  const destLower = destCity.toLowerCase()
-  return sgrCities.includes(originLower) && sgrCities.includes(destLower)
+  return base
 }
 
 /**
@@ -155,6 +63,7 @@ export async function getQuotesForRecommendations(params) {
       const quote = await calculateQuote({
         ...quoteParams,
         transportMode: rec.transportMode,
+        vehicleCategory: rec.vehicleClassCode || rec.vehicleCategory,
       })
       if (!quote.requiresCustomQuote) {
         quotes.push({

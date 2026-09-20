@@ -98,7 +98,7 @@ export async function initiatePayment(req, res, next) {
     if (data.orderId) {
       order = await prisma.order.findUnique({ where: { id: data.orderId } })
       if (!order) return res.status(404).json({ success: false, message: "Order not found" })
-      if (order.createdById !== req.user?.id && !["SUPER_ADMIN", "FINANCE"].includes(req.user?.role)) {
+      if (order.createdById !== req.user?.id && !["SUPER_ADMIN", "OPERATIONS_MANAGER", "FINANCE"].includes(req.user?.role)) {
         return res.status(403).json({ success: false, message: "You do not have access to this order" })
       }
 
@@ -180,7 +180,7 @@ export async function getPaymentRequestStatus(req, res, next) {
     if (
       paymentRequest.payerId &&
       req.user?.id !== paymentRequest.payerId &&
-      !["SUPER_ADMIN", "FINANCE"].includes(req.user?.role)
+      !["SUPER_ADMIN", "OPERATIONS_MANAGER", "FINANCE"].includes(req.user?.role)
     ) {
       return res.status(403).json({ success: false, message: "You do not have access to this payment request" })
     }

@@ -15,13 +15,13 @@ router.get("/stats", getStationStats)
 // These two embed sender/recipient full name/phone/city for every shipment in station
 // inventory — previously had no role check at all. listStations/getStationStats above
 // only return station metadata/counts, so they're left open to any authenticated user.
-const STATION_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "SGR_STATION_OFFICER", "WAREHOUSE_MANAGER"]
+const STATION_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"]
 router.get("/:id", authorizeRoles(...STATION_STAFF), getStation)
 router.get("/:id/inventory", authorizeRoles(...STATION_STAFF), getStationInventory)
 
 router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createStation)
-router.post("/:id/receive", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), receiveShipment)
-router.post("/:id/dispatch", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), dispatchInventory)
+router.post("/:id/receive", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), receiveShipment)
+router.post("/:id/dispatch", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), dispatchInventory)
 
 router.put("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateStation)
 router.delete("/:id", authorizeRoles("SUPER_ADMIN"), deleteStation)

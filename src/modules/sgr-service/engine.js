@@ -1,3 +1,4 @@
+import { checkHandoverProof } from "../../utils/handover.js"
 import prisma from "../../prisma/client.js"
 import { createTransportRequest } from "../transport/service.js"
 import { createTripForAssignment } from "../trips/controller.js"
@@ -738,10 +739,11 @@ export async function verifyCollection(shipmentId, userId, collectionData = {}) 
     throw new Error(`Shipment not ready for collection, currently ${shipment.status}`)
   }
 
-  // Verify OTP if provided
-  if (collectionData.otp && shipment.otp && collectionData.otp !== shipment.otp) {
-    throw new Error("Invalid collection OTP")
-  }
+  // Collection needs the receiver's code, or an ID recorded by the station officer.
+  const handover = checkHandoverProof(shipment, {
+    otp: collectionData.otp, recipientName: collectionData.recipientName,
+    idType: collectionData.idType, idNumber: collectionData.idNumber,
+  }, { allowIdFallback: true })
 
   // Update packages to DELIVERED
   await prisma.package.updateMany({
@@ -774,7 +776,7 @@ export async function verifyCollection(shipmentId, userId, collectionData = {}) 
       shipmentId,
       event: "CARGO_COLLECTED",
       status: "COLLECTED",
-      description: `Cargo collected by customer at ${shipment.destinationStation?.name || "station"}. Verified via ${collectionData.otp ? "OTP" : "identification"}.`,
+      description: `Cargo collected by customer at ${shipment.destinationStation?.name || "station"}. Verified via ${handover.method === "OTP" ? "confirmation code" : `ID (${handover.idType} ${handover.idNumber}, ${handover.recipientName})`}.`,
       createdBy: userId,
     },
   })
@@ -822,7 +824,7 @@ export async function raiseSGRException(shipmentId, userId, exceptionData = {}) 
 
   // Notify dispatchers
   const dispatchers = await prisma.user.findMany({
-    where: { role: { in: ["DISPATCHER", "OPERATIONS_MANAGER", "SUPER_ADMIN"] } },
+    where: { role: { in: ["OPERATIONS_MANAGER", "SUPER_ADMIN"] } },
     select: { id: true },
   })
   for (const d of dispatchers) {

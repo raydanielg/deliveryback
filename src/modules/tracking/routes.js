@@ -88,7 +88,7 @@ router.post("/driver/location", authorizeRoles("DRIVER"), updateDriverLocation)
 // Live GPS + name/phone for a driver — internal fleet-tracking dashboard feature only
 // (front/apps/web's "Driver Locations" page); no customer-facing client calls this.
 // Previously had no role check at all.
-router.get("/driver/:driverId", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getDriverLocation)
+router.get("/driver/:driverId", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getDriverLocation)
 
 /**
  * @swagger
@@ -125,7 +125,7 @@ router.get("/driver/:driverId", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGE
  */
 router.post(
   "/shipments/:shipmentId/events",
-  authorizeRoles("DRIVER", "SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER"),
+  authorizeRoles("DRIVER", "SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"),
   addTrackingEvent
 )
 

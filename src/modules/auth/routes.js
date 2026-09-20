@@ -11,7 +11,7 @@ import {
   verifyOtp,
   resetPassword,
 } from "./controller.js"
-import { authenticate } from "../../middleware/auth.js"
+import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 import {
   loginLimiter,
   otpLimiter,
@@ -348,7 +348,8 @@ router.get("/me/permissions", authenticate, (req, res) => {
  *       200:
  *         description: All roles and permissions
  */
-router.get("/permissions/all", authenticate, (req, res) => {
+// The role/permission matrix is an admin view — it previously had no role gate at all.
+router.get("/permissions/all", authenticate, authorizeRoles("SUPER_ADMIN"), (req, res) => {
   const rolePerms = {}
   for (const role of ALL_ROLES) {
     rolePerms[role] = {

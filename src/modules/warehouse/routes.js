@@ -10,14 +10,16 @@ const router = Router()
 
 router.use(authenticate)
 
-router.get("/", listWarehouseShipments)
-router.get("/stats", getWarehouseStats)
+const WAREHOUSE_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"]
 
-router.post("/:id/receive", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), receiveAtWarehouse)
-router.post("/verify-weigh", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), verifyAndWeigh)
-router.post("/:id/generate-label", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), generateLabel)
-router.post("/assign-shelf-bin", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), assignShelfBin)
-router.post("/consolidate", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), consolidateByRoute)
-router.post("/release", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER"), releaseShipment)
+router.get("/", authorizeRoles(...WAREHOUSE_STAFF), listWarehouseShipments)
+router.get("/stats", authorizeRoles(...WAREHOUSE_STAFF), getWarehouseStats)
+
+router.post("/:id/receive", authorizeRoles(...WAREHOUSE_STAFF), receiveAtWarehouse)
+router.post("/verify-weigh", authorizeRoles(...WAREHOUSE_STAFF), verifyAndWeigh)
+router.post("/:id/generate-label", authorizeRoles(...WAREHOUSE_STAFF), generateLabel)
+router.post("/assign-shelf-bin", authorizeRoles(...WAREHOUSE_STAFF), assignShelfBin)
+router.post("/consolidate", authorizeRoles(...WAREHOUSE_STAFF), consolidateByRoute)
+router.post("/release", authorizeRoles(...WAREHOUSE_STAFF), releaseShipment)
 
 export default router

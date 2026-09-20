@@ -321,7 +321,7 @@ export async function acceptOrder(req, res, next) {
 
     // Notify dispatcher
     const dispatchers = await prisma.user.findMany({
-      where: { role: { in: ["DISPATCHER", "OPERATIONS_MANAGER", "SUPER_ADMIN"] } },
+      where: { role: { in: ["OPERATIONS_MANAGER", "SUPER_ADMIN"] } },
       select: { id: true },
     })
     for (const d of dispatchers) {

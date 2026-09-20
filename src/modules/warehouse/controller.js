@@ -1,7 +1,9 @@
 import prisma from "../../prisma/client.js"
+import { checkHandoverProof, HandoverError } from "../../utils/handover.js"
 import { triggerStatusNotification } from "../notification-service/controller.js"
 import { emitToShipment } from "../../realtime/socket.js"
 import { computeCharges } from "../delivery-config/controller.js"
+import { logAction } from "../../middleware/audit-logger.js"
 import { receiveAtWarehouseSchema, verifyAndWeighSchema, assignShelfBinSchema, consolidateByRouteSchema, releaseShipmentSchema } from "./validation.js"
 
 function generateBarcode() {
@@ -221,8 +223,11 @@ export async function releaseShipment(req, res, next) {
     const shipment = await prisma.shipment.findUnique({ where: { id: data.shipmentId }, include: { deliveryZone: true } })
     if (!shipment) return res.status(404).json({ success: false, message: "Shipment not found" })
 
-    if (shipment.otp && data.otp && shipment.otp !== data.otp) {
-      return res.status(400).json({ success: false, message: "Invalid OTP" })
+    // Handover needs the receiver's code, or an ID recorded by the person at the counter.
+    let handover
+    try { handover = checkHandoverProof(shipment, { otp: data.otp, recipientName: data.recipientName, idType: data.recipientIdType, idNumber: data.recipientIdNumber }, { allowIdFallback: true }) } catch (e) {
+      if (e instanceof HandoverError) return res.status(400).json({ success: false, message: e.message })
+      throw e
     }
 
     // Payment-approval gate — only applies to shipments that opted into the Dubai<->TZ
@@ -261,13 +266,18 @@ export async function releaseShipment(req, res, next) {
         shipmentId: data.shipmentId,
         event: "RELEASED",
         status: "DELIVERED",
-        description: `Shipment released to ${data.recipientName}${data.recipientIdNumber ? ` (ID: ${data.recipientIdType}: ${data.recipientIdNumber})` : ""}`,
+        description: `Shipment released to ${data.recipientName} (verified by ${handover.method === "OTP" ? "confirmation code" : "ID"})${data.recipientIdNumber ? ` (ID: ${data.recipientIdType}: ${data.recipientIdNumber})` : ""}`,
       },
     })
 
     await triggerStatusNotification(data.shipmentId, "DELIVERED")
     emitToShipment(data.shipmentId, "shipment:released", {
       shipmentId: data.shipmentId, trackingNumber: shipment.trackingNumber, recipientName: data.recipientName, deliveredAt: updated.actualDelivery,
+    })
+
+    await logAction({
+      userId: req.user.id, action: "RELEASE_SHIPMENT", entity: "Shipment", entityId: data.shipmentId,
+      changes: { trackingNumber: shipment.trackingNumber, recipientName: data.recipientName, recipientId: data.recipientIdNumber ? `${data.recipientIdType}:${data.recipientIdNumber}` : null, approvalGated: requiresApproval }, req,
     })
 
     res.json({ success: true, data: updated, message: "Shipment released to recipient" })

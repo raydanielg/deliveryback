@@ -206,16 +206,16 @@ The pricing engine supports:
 
 ## Roles
 
-- SUPER_ADMIN
-- OPERATIONS_MANAGER
-- DISPATCHER
-- FINANCE
-- CUSTOMER_SUPPORT
-- WAREHOUSE_MANAGER
-- CUSTOMS_OFFICER
-- REPORT_VIEWER
+Four staff roles plus the two external user types (single source of truth: `src/utils/roles.js`):
+
+- SUPER_ADMIN — main admin, sees everything
+- OPERATIONS_MANAGER — Operations / IT; carries Super Admin privileges (wherever SUPER_ADMIN is allowed, so is this role)
+- FINANCE — payments, invoicing, payment approvals, pricing, reports
+- WAREHOUSE_MANAGER — warehouse, receiving, consolidation, SGR station cargo, release
 - CUSTOMER
 - DRIVER
+
+(PARTNER_API also exists as a system identity for partner integrations — it is never a login.)
 
 ## Test Credentials (after seed)
 

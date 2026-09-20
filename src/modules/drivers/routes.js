@@ -13,15 +13,15 @@ router.use(authenticate)
 // listDrivers is fleet-roster enumeration — no customer-app usage exists, so staff-only.
 // getDriver already redacts internalNotes/emergency contacts/documents for non-staff
 // (scopeDriverFields in the controller), so it's left open to any authenticated user.
-router.get("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), listDrivers)
-router.get("/compliance-report", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), fleetDriverComplianceReport)
+router.get("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listDrivers)
+router.get("/compliance-report", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), fleetDriverComplianceReport)
 router.get("/:id", getDriver)
-router.get("/:id/compliance", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getDriverCompliance)
+router.get("/:id/compliance", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getDriverCompliance)
 router.get("/:id/performance", getDriverPerformance)
 
 router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createDriver)
 router.put("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateDriver)
-router.patch("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), updateDriverStatus)
+router.patch("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateDriverStatus)
 router.patch("/:id/approval", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateDriverApproval)
 
 router.get("/:id/documents", listDriverDocuments)

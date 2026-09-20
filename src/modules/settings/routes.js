@@ -46,7 +46,7 @@ router.get("/public-map", getPublicMapSettings)
  *       403:
  *         description: Insufficient permissions
  */
-router.get("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]), getMapSettings)
+router.get("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER"]), getMapSettings)
 
 /**
  * @swagger
@@ -82,7 +82,7 @@ router.get("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANA
  *       403:
  *         description: Insufficient permissions
  */
-router.put("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]), updateMapSettings)
+router.put("/map", authenticate, authorizeRoles(["SUPER_ADMIN", "OPERATIONS_MANAGER"]), updateMapSettings)
 
 /**
  * @swagger

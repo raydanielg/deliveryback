@@ -19,7 +19,8 @@ router.use(authenticate)
  *       200:
  *         description: List of carriers
  */
-router.get("/", listCarriers)
+// Fleet data — carrier names/phones/vehicles. It previously had no role check, so any logged-in customer could list it.
+router.get("/", authorizeRoles("SUPER_ADMIN"), listCarriers)
 
 /**
  * @swagger
@@ -69,6 +70,6 @@ router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createCarr
  *         description: Carrier not found
  */
 // Exposes carrier's driver names/phone numbers — staff-only.
-router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getCarrier)
+router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getCarrier)
 
 export default router

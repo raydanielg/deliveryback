@@ -54,13 +54,19 @@ import dispatchRoutes from "./modules/dispatch/routes.js"
 import transportRoutes from "./modules/transport/routes.js"
 import tripRoutes from "./modules/trips/routes.js"
 import whatsappRoutes from "./modules/whatsapp/routes.js"
+import dubaiReceivingRoutes from "./modules/dubai-receiving/routes.js"
 import consolidationBoxesRoutes from "./modules/consolidation-boxes/routes.js"
 import tripManifestsRoutes from "./modules/trip-manifests/routes.js"
 import shelfLocationsRoutes from "./modules/shelf-locations/routes.js"
 import cargoIntakeRoutes from "./modules/cargo-intake/routes.js"
 import deliveryConfigRoutes from "./modules/delivery-config/routes.js"
 import paymentApprovalsRoutes from "./modules/payment-approvals/routes.js"
+import invoicingRoutes from "./modules/invoicing/routes.js"
+import deliveryRegisterRoutes from "./modules/delivery-register/routes.js"
 import scanRoutes from "./modules/scan/routes.js"
+import dashboardRoutes from "./modules/dashboard/routes.js"
+import logisticsRoutes from "./modules/logistics/routes.js"
+import branchRoutes, { emergencyRouter } from "./modules/branches/routes.js"
 import { initWhatsAppEngine } from "./modules/whatsapp/controller.js"
 import { initWhatsAppEventIntegration } from "./modules/whatsapp/event-integration.js"
 import { listAuditLogs } from "./middleware/audit-logger.js"
@@ -69,6 +75,7 @@ import { errorHandler, notFound } from "./middleware/errorHandler.js"
 import { verifyEmailConnection, sendAccountDeletionRequest } from "./modules/auth/email.service.js"
 import { sendSms } from "./modules/auth/sms.service.js"
 import { apiLimiter, adminLimiter, paymentLimiter } from "./middleware/rate-limit.js"
+import { writeRequestLog } from "./lib/request-log.js"
 
 dotenv.config()
 
@@ -76,6 +83,26 @@ const app = express()
 
 app.disable("x-powered-by")
 app.set("trust proxy", 1)
+
+// Lightweight request logger — prints method, URL, status code and duration for
+// every incoming request, and appends a JSON-lines record to logs/requests.log so
+// the admin CLI (`npm run admin` -> `monitor`) can render a live request table.
+app.use((req, res, next) => {
+  const start = Date.now()
+  res.on("finish", () => {
+    const ms = Date.now() - start
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)`)
+    writeRequestLog({
+      ts: new Date().toISOString(),
+      method: req.method,
+      url: req.originalUrl,
+      status: res.statusCode,
+      ms,
+      ip: req.ip,
+    })
+  })
+  next()
+})
 
 const isProduction = process.env.NODE_ENV === "production"
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
@@ -85,12 +112,17 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
 
 app.use(
   cors({
-    origin: isProduction
-      ? (origin, cb) => {
-          if (!origin || allowedOrigins.includes(origin)) return cb(null, true)
-          cb(new Error("Not allowed by CORS"))
-        }
-      : true,
+    origin: (origin, cb) => {
+      // Non-browser clients (curl, mobile apps, server-to-server) send no Origin — allow.
+      if (!origin) return cb(null, true)
+      // Development: accept requests from any origin.
+      if (!isProduction) return cb(null, true)
+      // Always allow localhost / loopback so local frontends and tools can reach the API.
+      if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin)) return cb(null, true)
+      // Production: only the configured allowlist.
+      if (allowedOrigins.includes(origin)) return cb(null, true)
+      cb(new Error("Not allowed by CORS"))
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -239,9 +271,16 @@ app.use("/api/v1/consolidation-boxes", consolidationBoxesRoutes)
 app.use("/api/v1/trip-manifests", tripManifestsRoutes)
 app.use("/api/v1/shelf-locations", shelfLocationsRoutes)
 app.use("/api/v1/cargo-intake", cargoIntakeRoutes)
+app.use("/api/v1/invoicing", invoicingRoutes)
+app.use("/api/v1/delivery-register", deliveryRegisterRoutes)
 app.use("/api/v1/delivery-config", deliveryConfigRoutes)
 app.use("/api/v1/payment-approvals", paymentApprovalsRoutes)
+app.use("/api/v1/dubai-receiving", dubaiReceivingRoutes)
 app.use("/api/v1/scan", scanRoutes)
+app.use("/api/v1/dashboard", dashboardRoutes)
+app.use("/api/v1/logistics", logisticsRoutes)
+app.use("/api/v1/branches", branchRoutes)
+app.use("/api/v1/emergencies", emergencyRouter)
 
 // Data deletion information page for Google Play Data safety form
 app.get("/data-deletion", (req, res) => {

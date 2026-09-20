@@ -112,6 +112,12 @@ export const recommendModeSchema = z.object({
   destCountry: z.string().default("Tanzania"),
   cargoType: z.enum(cargoTypes).optional(),
   serviceLevel: z.enum(["STANDARD", "EXPRESS", "SAME_DAY", "NEXT_DAY", "ECONOMY", "PRIORITY"]).optional(),
+  originAirport: z.string().length(3).optional(),
+  destinationAirport: z.string().length(3).optional(),
+  originLatitude: z.number().min(-90).max(90).optional(),
+  originLongitude: z.number().min(-180).max(180).optional(),
+  destinationLatitude: z.number().min(-90).max(90).optional(),
+  destinationLongitude: z.number().min(-180).max(180).optional(),
 })
 
 export const bulkBookingSchema = z.object({

@@ -1,4 +1,5 @@
 import prisma from "../../prisma/client.js"
+import { orderScope } from "../../utils/branch-scope.js"
 import { z } from "zod"
 import { createNotification } from "../notifications/controller.js"
 import { streamPaymentReceipt } from "../../utils/receipt.js"
@@ -16,12 +17,21 @@ function generatePaymentRef() {
   return `PAY-${year}-${random}`
 }
 
+// A customer sees payments they made; full-view staff see all; other roles only payments on orders in their scope.
+async function canSeePayment(user, payment) {
+  if (user.role === "CUSTOMER") return payment.payerId === user.id
+  const scope = await orderScope(user)
+  if (!scope) return true
+  return !!(await prisma.order.findFirst({ where: { AND: [{ id: payment.orderId }, scope] }, select: { id: true } }))
+}
+
 export async function listPayments(req, res, next) {
   try {
     // Previously unscoped — any authenticated user, including a customer, could list the
     // 50 most recent payments platform-wide (amounts, methods, transaction IDs, other
     // customers' names/emails).
-    const where = req.user.role === "CUSTOMER" ? { payerId: req.user.id } : {}
+    const scope = await orderScope(req.user)
+    const where = req.user.role === "CUSTOMER" ? { payerId: req.user.id } : scope ? { order: scope } : {}
     const payments = await prisma.payment.findMany({
       where,
       include: { order: true, payer: { select: { name: true, email: true } } },
@@ -109,7 +119,7 @@ export async function getPayment(req, res, next) {
     })
     if (!payment) return res.status(404).json({ success: false, message: "Payment not found" })
 
-    if (req.user.role === "CUSTOMER" && payment.payerId !== req.user.id) {
+    if (!(await canSeePayment(req.user, payment))) {
       return res.status(404).json({ success: false, message: "Payment not found" })
     }
 
@@ -131,7 +141,7 @@ export async function getPaymentReceipt(req, res, next) {
     })
     if (!payment) return res.status(404).json({ success: false, message: "Payment not found" })
 
-    if (req.user.role === "CUSTOMER" && payment.payerId !== req.user.id) {
+    if (!(await canSeePayment(req.user, payment))) {
       return res.status(404).json({ success: false, message: "Payment not found" })
     }
 

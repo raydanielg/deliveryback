@@ -28,8 +28,18 @@ model User {
   // independent of email/password. Both optional — only provisioned for staff who need it.
   pinCode       String?
   badgeCode     String?   @unique
+  // Branch staff (BRANCH_MANAGER, AGENT) only ever see their own branch.
+  branchId      String?
+  // AGENT only: CLEARING | FORWARDING | RECEIVING
+  agentKind     String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  branch        Branch?   @relation("branchStaff", fields: [branchId], references: [id])
+  agentTasks    AgentTask[]  @relation("agentTasksAssignedTo")
+  agentTasksGiven AgentTask[] @relation("agentTasksAssignedBy")
+  emergenciesReported Emergency[] @relation("emergenciesReportedBy")
+  emergenciesResolved Emergency[] @relation("emergenciesResolvedBy")
 
   customer      Customer?
   driver        Driver?
@@ -59,22 +69,24 @@ model User {
   createdTripManifests TripManifest[]     @relation("tripManifestsCreatedBy")
   requestedApprovals   PaymentApproval[]  @relation("paymentApprovalsRequestedBy")
   approvedApprovals    PaymentApproval[]  @relation("paymentApprovalsApprovedBy")
+  preparedInvoices     Invoice[]          @relation("invoicesPreparedBy")
+  deliveryRecordsCreated DeliveryRecord[] @relation("deliveryRecordsCreated")
+  deliveryFeeApprovals DeliveryRecord[]   @relation("deliveryFeeApprovals")
 
   @@index([email])
+  @@index([branchId])
   @@map("users")
 }
 
 enum UserRole {
-  SUPER_ADMIN
-  OPERATIONS_MANAGER
-  SGR_STATION_OFFICER
-  DISPATCHER
-  FINANCE
-  CUSTOMER_SUPPORT
-  WAREHOUSE_MANAGER
-  CUSTOMS_OFFICER
-  PRICING_MANAGER
-  REPORT_VIEWER
+  // Staff — see src/utils/roles.js for the model.
+  SUPER_ADMIN         // main admin
+  OPERATIONS_MANAGER  // operations / IT — carries Super Admin privileges
+  FINANCE             // payments, invoicing, approvals, pricing, reports
+  WAREHOUSE_MANAGER   // warehouse, receiving, consolidation, SGR station cargo
+  BRANCH_MANAGER      // runs one branch — sees only that branch
+  AGENT               // clearing / forwarding / receiving partner tied to a branch
+  // External users
   CUSTOMER
   DRIVER
   // Attribution anchor for records created by an external partner via the integration API —
@@ -146,6 +158,17 @@ model Branch {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   addresses      Address[]
 
+  // Short unique code used in reports and labels (DAR, MWZ, BUK…)
+  code           String?  @unique
+  // Coverage: a shipment is handled by the branch whose city (or, failing that, region) matches.
+  isHeadOffice   Boolean  @default(false)
+
+  staff              User[]       @relation("branchStaff")
+  originShipments    Shipment[]   @relation("shipmentOriginBranch")
+  destinationShipments Shipment[] @relation("shipmentDestinationBranch")
+  agentTasks         AgentTask[]
+  emergencies        Emergency[]
+
   @@map("branches")
 }
 
@@ -156,27 +179,38 @@ model Branch {
 model Customer {
   id            String       @id @default(cuid())
   userId        String       @unique
+  customerCode  String?      @unique   // XC-00001 — auto-generated (XERIN Module 12)
   type          CustomerType @default(INDIVIDUAL)
   organizationId String?
   phone         String
   altPhone      String?
+  email         String?
   address       String?
   city          String?
   region        String?
   country       String       @default("Tanzania")
   totalShipments Int         @default(0)
   totalSpent    Decimal      @default(0) @db.Decimal(12, 2)
+  balance       Decimal      @default(0) @db.Decimal(12, 2) // outstanding debt
   rating        Float?
+  status        CustomerStatus @default(ACTIVE)
+  // XERIN Module 12 — delivery preferences used to pre-fill Dubai receiving
+  defaultOption   DeliveryOption?
+  defaultZoneId   String?
+  defaultAddress  String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
   user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization  Organization? @relation(fields: [organizationId], references: [id])
+  defaultZone   DeliveryZone? @relation(fields: [defaultZoneId], references: [id])
   orders        Order[]
   shipments     Shipment[]
   addresses     Address[]
   ratings       Rating[]
 
+  @@index([phone])
+  @@index([customerCode])
   @@map("customers")
 }
 
@@ -185,6 +219,11 @@ enum CustomerType {
   INDIVIDUAL
   BUSINESS
   CORPORATE
+}
+
+enum CustomerStatus {
+  ACTIVE
+  BLOCKED
 }
 
 // ============================================================
@@ -257,6 +296,7 @@ model Driver {
   ratings         Rating[]
   documents       DriverDocument[]
   orderOffers     OrderOffer[]
+  deliveryRecords DeliveryRecord[]
   rejections      DriverRejection[]
   matchedTransportRequest TransportRequest? @relation("transportMatchedDriver")
   trips           Trip[]
@@ -381,6 +421,7 @@ model Vehicle {
   assignments    Assignment[]
   maintenanceRecords VehicleMaintenanceRecord[]
   trips          Trip[]
+  deliveryRecords DeliveryRecord[]
   transportCapacities TransportCapacity[]
   matchedTransportRequest TransportRequest? @relation("transportMatchedVehicle")
   sgrLegs         SGRLeg[]
@@ -469,6 +510,9 @@ model Region {
   name      String
   code      String?
   isActive  Boolean  @default(true)
+  // Super Admin switch: a blocked region stays visible but cannot be booked to/from.
+  isBlocked     Boolean  @default(false)
+  blockedReason String?
 
   country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
   cities    City[]
@@ -486,6 +530,11 @@ model City {
   latitude  Float?
   longitude Float?
   isActive  Boolean  @default(true)
+  // REGIONAL_CAPITAL | TOWN — informational, used for search ranking and admin filters.
+  kind          String   @default("TOWN")
+  // Super Admin switch: a blocked destination stays visible but cannot be booked to/from.
+  isBlocked     Boolean  @default(false)
+  blockedReason String?
 
   country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
   region    Region?  @relation(fields: [regionId], references: [id])
@@ -511,6 +560,145 @@ model Zone {
   pricingRules PricingRule[]
 
   @@map("zones")
+}
+
+// ============================================================
+// BRANCH WORK — agent tasks and emergencies
+// ============================================================
+
+// A branch manager hands an agent a piece of work on a shipment: clear it through customs,
+// forward it onward, or receive it at the branch. The agent sees and updates only their own tasks.
+model AgentTask {
+  id           String   @id @default(cuid())
+  shipmentId   String
+  branchId     String
+  kind         String                     // CLEARING | FORWARDING | RECEIVING
+  status       String   @default("PENDING") // PENDING | IN_PROGRESS | DONE | CANCELLED
+  notes        String?
+  resultNotes  String?
+  assignedToId String
+  assignedById String
+  dueAt        DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  shipment     Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  branch       Branch   @relation(fields: [branchId], references: [id])
+  assignedTo   User     @relation("agentTasksAssignedTo", fields: [assignedToId], references: [id])
+  assignedBy   User     @relation("agentTasksAssignedBy", fields: [assignedById], references: [id])
+
+  @@index([assignedToId, status])
+  @@index([branchId, status])
+  @@index([shipmentId])
+  @@map("agent_tasks")
+}
+
+// Something urgent: accident, theft, fire, breakdown with perishable cargo, safety threat…
+// Raising one notifies the branch manager and the Super Admin / Operations team straight away.
+model Emergency {
+  id           String   @id @default(cuid())
+  type         String                     // ACCIDENT | THEFT | FIRE | VEHICLE_BREAKDOWN | CARGO_DAMAGE | SAFETY_THREAT | OTHER
+  severity     String   @default("HIGH")  // LOW | MEDIUM | HIGH | CRITICAL
+  status       String   @default("OPEN")  // OPEN | ACKNOWLEDGED | RESOLVED
+  description  String
+  location     String?
+  latitude     Float?
+  longitude    Float?
+  branchId     String?
+  shipmentId   String?
+  reportedById String
+  resolvedById String?
+  resolution   String?
+  acknowledgedAt DateTime?
+  resolvedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  branch       Branch?  @relation(fields: [branchId], references: [id])
+  shipment     Shipment? @relation("shipmentEmergencies", fields: [shipmentId], references: [id], onDelete: SetNull)
+  reportedBy   User     @relation("emergenciesReportedBy", fields: [reportedById], references: [id])
+  resolvedBy   User?    @relation("emergenciesResolvedBy", fields: [resolvedById], references: [id])
+
+  @@index([status, severity])
+  @@index([branchId, status])
+  @@map("emergencies")
+}
+
+// ============================================================
+// AIRPORTS (public IATA data, seeded — editable by Super Admin)
+// ============================================================
+
+model Airport {
+  id            String   @id @default(cuid())
+  iata          String   @unique
+  name          String
+  city          String
+  countryCode   String
+  countryName   String
+  latitude      Float?
+  longitude     Float?
+  // Domestic Tanzanian airports vs East Africa vs world hubs — drives ordering and defaults.
+  scope         String   @default("WORLD") // TANZANIA | EAST_AFRICA | WORLD
+  isActive      Boolean  @default(true)
+  isBlocked     Boolean  @default(false)
+  blockedReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([city])
+  @@map("airports")
+}
+
+// ============================================================
+// TRANSPORT CATALOG — vehicle/service classes with rate cards.
+// Everything the booking flow used to hardcode (weight limits, speed, ETA, rates)
+// lives here so Super Admin can change it without a deploy.
+// ============================================================
+
+model VehicleClass {
+  id                 String        @id @default(cuid())
+  code               String        @unique      // e.g. BODA, CAR, VAN, PICKUP, TRUCK, TRAILER, AIR_CARGO, SGR_PARCEL
+  name               String
+  nameSw             String?
+  description        String?
+  mode               TransportMode                // ROAD | AIR | RAIL | SEA | COURIER
+  vehicleType        VehicleType?                 // maps to fleet vehicles (ROAD only)
+  minWeightKg        Decimal       @default(0) @db.Decimal(10, 2)
+  maxWeightKg        Decimal       @db.Decimal(10, 2)
+  maxVolumeM3        Decimal?      @db.Decimal(8, 2)
+  // Rate card: price = baseFare + perKm*km + perKg*(chargeable kg beyond includedKg), then minCharge.
+  baseFare           Decimal       @default(0) @db.Decimal(12, 2)
+  perKm              Decimal       @default(0) @db.Decimal(12, 2)
+  perKg              Decimal       @default(0) @db.Decimal(12, 2)
+  includedKg         Decimal       @default(0) @db.Decimal(10, 2)
+  minCharge          Decimal?      @db.Decimal(12, 2)
+  // Journey time: handling (pickup/loading/sorting) + distance/avgSpeed, spread over
+  // driving days of maxDriveHoursPerDay. That is what makes an order last 1, 2 or more days.
+  avgSpeedKmh        Decimal       @db.Decimal(6, 1)
+  handlingHours      Decimal       @default(2) @db.Decimal(6, 1)
+  maxDriveHoursPerDay Decimal      @default(10) @db.Decimal(4, 1)
+  // Longest distance this class serves (boda/car are not used for cross-country hauls). Null = unlimited.
+  maxDistanceKm      Decimal?      @db.Decimal(8, 1)
+  sortOrder          Int           @default(0)
+  isActive           Boolean       @default(true)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([mode, isActive])
+  @@map("vehicle_classes")
+}
+
+// Service level adjusts journey time and price of a rate card.
+model ServiceLevelConfig {
+  level        ServiceLevel @id
+  label        String
+  etaFactor    Decimal      @default(1) @db.Decimal(4, 2)   // multiplies handling + travel time
+  priceFactor  Decimal      @default(1) @db.Decimal(4, 2)   // multiplies the rate-card price
+  isActive     Boolean      @default(true)
+  updatedAt    DateTime     @updatedAt
+
+  @@map("service_level_configs")
 }
 
 // ============================================================
@@ -773,6 +961,12 @@ enum PaymentStatus {
 
 model Shipment {
   id               String           @id @default(cuid())
+  originBranchId      String?
+  destinationBranchId String?
+  originBranch        Branch?  @relation("shipmentOriginBranch", fields: [originBranchId], references: [id])
+  destinationBranch   Branch?  @relation("shipmentDestinationBranch", fields: [destinationBranchId], references: [id])
+  agentTasks          AgentTask[]
+  emergencies         Emergency[] @relation("shipmentEmergencies")
   trackingNumber   String           @unique
   orderId          String
   createdById      String
@@ -869,6 +1063,27 @@ model Shipment {
   storageStartAt        DateTime?        // free-storage clock start, set at TZ goods-received
   shelfLocationId       String?
 
+  // Dubai Receiving fields (Module 1)
+  supplierId            String?
+  supplierName          String?          // free-text fallback for "Other suppliers"
+  itemType              ItemType?
+  receivedLocation      ReceivedLocation? // DUBAI_OFFICE | DUBAI_WAREHOUSE (R11 — required at intake)
+  piecesCount           Int?
+  piecesUnit            String?          // BOX | PARCEL
+
+  // TZ Receiving / Warehouse fields (Modules 5 & 6)
+  weightKgTz            Decimal?         @db.Decimal(8, 2) // weight measured at TZ — vs Dubai weight => discrepancy
+  condition             ItemCondition?
+  discrepancyCode       DiscrepancyCode?
+  discrepancyNotes      String?
+  discrepancyPhotoUrl   String?
+  sortedDate            DateTime?        // sorting completion date — distinct from storageStartAt
+  readyDate             DateTime?        // triggers "ready for collection" SMS
+  releaseDate           DateTime?        // stops the storage clock
+  lastMovementAt        DateTime?        // last time the parcel was physically moved
+  delNumber             String?
+  dispatchNo            String?
+
   isActive         Boolean          @default(true)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -903,6 +1118,7 @@ model Shipment {
   ratings          Rating[]
   parcelCategory   ParcelCategory?  @relation(fields: [parcelCategoryId], references: [id])
   proofImages      ShipmentProofImage[]
+  supplier         Supplier?        @relation(fields: [supplierId], references: [id])
   station          Station?        @relation("stationShipments", fields: [stationId], references: [id])
   receivedAtStation Station?       @relation("stationReceivedShipments", fields: [receivedAtStationId], references: [id])
   originStation    Station?        @relation("originStationShipments", fields: [originStationId], references: [id])
@@ -926,6 +1142,8 @@ model Shipment {
   shelfLocation    ShelfLocation?   @relation("shipmentShelfLocation", fields: [shelfLocationId], references: [id])
   boxItems         BoxItem[]
   paymentApprovals PaymentApproval[]
+  invoices         Invoice[]
+  deliveryRecords  DeliveryRecord[]
 
   // Station fields
   stationId        String?
@@ -1014,6 +1232,15 @@ enum ShipmentStatus {
   CANCELLED
   ON_HOLD
   EXCEPTION
+  // Dubai<->Tanzania consolidation workflow statuses (XERIN spec §6/§7.1)
+  RECEIVED_DUBAI
+  AWAITING_CONSOLIDATION
+  DEPARTED_DUBAI
+  ARRIVED_TANZANIA
+  ON_SHELF
+  INVOICED
+  OLD_STOCK
+  CLOSED
 }
 
 model ShipmentStatusHistory {
@@ -1371,12 +1598,19 @@ enum PaymentMethod {
   CREDIT
   MANUAL
   WALLET
+  // XERIN spec §7 — Tanzanian channels recorded on invoices
+  NMB
+  CRDB
+  MPESA
+  TIGOPESA
+  AIRTEL_MONEY
 }
 
 model Invoice {
   id              String   @id @default(cuid())
   invoiceNumber   String   @unique
-  orderId         String
+  orderId         String?
+  shipmentId      String?
   organizationId  String?
   amount          Decimal  @db.Decimal(12, 2)
   currency        String   @default("TZS")
@@ -1388,9 +1622,20 @@ model Invoice {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // XERIN Module 7 — charge breakdown (total = freight + storage + delivery)
+  freightCharges  Decimal  @default(0) @db.Decimal(12, 2)
+  storageCharges  Decimal  @default(0) @db.Decimal(12, 2)
+  deliveryCharges Decimal  @default(0) @db.Decimal(12, 2)
+  paymentMethod   PaymentMethod?
+  preparedById    String?
+  remarks         String?
+
+  order           Order?   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shipment        Shipment? @relation(fields: [shipmentId], references: [id])
+  preparedBy      User?    @relation("invoicesPreparedBy", fields: [preparedById], references: [id])
   paymentApprovals PaymentApproval[]
 
+  @@index([shipmentId])
   @@map("invoices")
 }
 
@@ -3069,7 +3314,9 @@ model DeliveryZone {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  shipments Shipment[]
+  shipments       Shipment[]
+  deliveryRecords DeliveryRecord[]
+  customers       Customer[]
 
   @@map("delivery_zones")
 }
@@ -3082,6 +3329,7 @@ model ConsolidationSettings {
   storageRatePerDayTzs Decimal  @default(2000) @db.Decimal(10, 2)
   freeStorageDays      Int      @default(3)
   defaultBoxTargetKg   Decimal  @default(23) @db.Decimal(6, 2)
+  oldStockDays         Int      @default(30) // days on shelf before a parcel is flagged OLD_STOCK (§7.7)
   updatedById          String?
   updatedAt            DateTime @updatedAt
 
@@ -3116,4 +3364,114 @@ model PaymentApproval {
   @@index([shipmentId])
   @@map("payment_approvals")
 }
+
+// ============================================================
+// DUBAI WORKFLOW CONFIG LISTS (XERIN spec §7)
+// ============================================================
+
+// Suppliers list — the 14 entries hidden inside Excel data-validation (§1.5/§7.2).
+// Managed via Config so new suppliers can be added without a deploy.
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  contact   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shipments Shipment[]
+
+  @@map("suppliers")
+}
+
+// Item types — the 9 categories from Config_Lists (§7.3).
+enum ItemType {
+  ELECTRONICS
+  GENERAL_CARGO
+  ELI
+  ONLINE_PARCEL
+  SPARE_PARTS
+  TV
+  COSMETICS
+  MIX_ITEMS
+  OTHERS
+}
+
+// Where a parcel was physically received in Dubai (R11 — mandatory at intake).
+enum ReceivedLocation {
+  DUBAI_OFFICE
+  DUBAI_WAREHOUSE
+}
+
+// Parcel condition — fixed choices replacing free-text "GOOG CONDITION" typos (D11).
+enum ItemCondition {
+  GOOD
+  DAMAGED
+  INCOMPLETE
+  SUSPICIOUS
+}
+
+// Discrepancy codes recorded at TZ receiving when reality doesn't match Dubai's
+// declaration (§7.5). A photo is mandatory for DAMAGED_IN_TRANSIT.
+enum DiscrepancyCode {
+  WEIGHT_MISMATCH
+  PIECES_MISSING
+  WRONG_CUSTOMER
+  DAMAGED_IN_TRANSIT
+  BOX_OPENED
+}
+
+// ============================================================
+// DELIVERY REGISTER (XERIN spec Module 9)
+// ============================================================
+
+// One row per delivery run. A driver may carry several shipments on one record is
+// NOT allowed here — each shipment gets its own record so OTP/signature is captured
+// per parcel (R7). Multiple records per shipment are allowed across attempts.
+enum DeliveryRecordStatus {
+  ASSIGNED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_DELIVERY
+  RETURNED_TO_WAREHOUSE
+}
+
+model DeliveryRecord {
+  id                  String               @id @default(cuid())
+  deliveryNo          String               @unique // DEL-YYYY-MM-NNNN — auto-generated
+  shipmentId          String
+  driverId            String
+  vehicleId           String?
+  zoneId              String?
+  deliveryFee         Decimal              @default(0) @db.Decimal(12, 2)
+  feeOverrideReason   String?              // required when fee differs from zone rate (§2.2)
+  feeApprovedById     String?              // manager who approved a non-standard fee
+  address             String?
+  status              DeliveryRecordStatus @default(ASSIGNED)
+  attempt             Int                  @default(1) // delivery attempt number
+  failureReason       String?
+  receiverName        String?
+  receiverOtp         String?              // OTP captured at handover — required to close (D7)
+  receiverSignatureUrl String?
+  driverSignatureUrl  String?
+  releasedAt          DateTime?
+  deliveredAt         DateTime?
+  createdById         String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  shipment  Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  driver    Driver        @relation(fields: [driverId], references: [id])
+  vehicle   Vehicle?      @relation(fields: [vehicleId], references: [id])
+  zone      DeliveryZone? @relation(fields: [zoneId], references: [id])
+  feeApprovedBy User?     @relation("deliveryFeeApprovals", fields: [feeApprovedById], references: [id])
+  createdBy User          @relation("deliveryRecordsCreated", fields: [createdById], references: [id])
+
+  @@index([shipmentId])
+  @@index([driverId])
+  @@index([status])
+  @@map("delivery_records")
+}
+
+
 

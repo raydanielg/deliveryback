@@ -68,7 +68,7 @@ router.post("/", uploadDocument)
  *       404:
  *         description: Document not found
  */
-router.put("/:id/verify", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMS_OFFICER", "CUSTOMER_SUPPORT"), verifyDocument)
+router.put("/:id/verify", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), verifyDocument)
 
 /**
  * @swagger

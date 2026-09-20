@@ -61,7 +61,7 @@ export async function driverAuth(req, res, next) {
 
     if (!driver) {
       // Allow admin/ops roles to access driver endpoints for testing
-      if (["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"].includes(user.role)) {
+      if (["SUPER_ADMIN", "OPERATIONS_MANAGER"].includes(user.role)) {
         req.user = user
         req.driver = null
         return next()

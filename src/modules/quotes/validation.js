@@ -19,6 +19,14 @@ export const calculateQuoteSchema = z.object({
   insuranceEnabled: z.boolean().optional().default(false),
   declaredValue: z.number().min(0).optional().default(0),
   currency: z.string().default("TZS"),
+  // Exact map pins inside a city, airports for air freight, and an explicit vehicle choice.
+  originLatitude: z.number().min(-90).max(90).optional(),
+  originLongitude: z.number().min(-180).max(180).optional(),
+  destinationLatitude: z.number().min(-90).max(90).optional(),
+  destinationLongitude: z.number().min(-180).max(180).optional(),
+  originAirport: z.string().length(3).optional(),
+  destinationAirport: z.string().length(3).optional(),
+  vehicleCategory: z.string().optional(),
 })
 
 export const createQuoteRequestSchema = z.object({

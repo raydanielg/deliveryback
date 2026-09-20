@@ -1,4 +1,5 @@
 import prisma from "../../prisma/client.js"
+import { orderScope } from "../../utils/branch-scope.js"
 
 export async function listOrders(req, res, next) {
   try {
@@ -10,9 +11,8 @@ export async function listOrders(req, res, next) {
     const where = {}
     if (status) where.status = status
     if (paymentStatus) where.paymentStatus = paymentStatus
-    if (req.user.role === "CUSTOMER") {
-      where.createdById = req.user.id
-    }
+    const scope = await orderScope(req.user)
+    if (scope) where.AND = [scope]
 
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
@@ -65,7 +65,8 @@ export async function getOrder(req, res, next) {
     // Previously unscoped — any authenticated customer could fetch any order by guessing/
     // incrementing its ID and see the full record: other customers' shipments, addresses,
     // payments, and invoices. listOrders already scoped by createdById; this didn't.
-    if (req.user.role === "CUSTOMER" && order.createdById !== req.user.id) {
+    const scope = await orderScope(req.user)
+    if (scope && !(await prisma.order.findFirst({ where: { AND: [{ id: order.id }, scope] }, select: { id: true } }))) {
       return res.status(404).json({ success: false, message: "Order not found" })
     }
 
@@ -75,13 +76,16 @@ export async function getOrder(req, res, next) {
 
 export async function getOrderStats(req, res, next) {
   try {
+    // Same visibility rule as the list: customers/drivers/branch roles only count what they can see.
+    const scope = await orderScope(req.user)
+    const base = scope ? { AND: [scope] } : {}
     const [total, pending, confirmed, cancelled, totalRevenue] = await Promise.all([
-      prisma.order.count(),
-      prisma.order.count({ where: { status: "CREATED" } }),
-      prisma.order.count({ where: { status: "CONFIRMED" } }),
-      prisma.order.count({ where: { status: "CANCELLED" } }),
+      prisma.order.count({ where: base }),
+      prisma.order.count({ where: { ...base, status: "CREATED" } }),
+      prisma.order.count({ where: { ...base, status: "CONFIRMED" } }),
+      prisma.order.count({ where: { ...base, status: "CANCELLED" } }),
       prisma.order.aggregate({
-        where: { paymentStatus: "PAID" },
+        where: { ...base, paymentStatus: "PAID" },
         _sum: { totalAmount: true },
       }),
     ])

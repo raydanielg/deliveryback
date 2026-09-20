@@ -8,7 +8,7 @@ import { auditMiddleware } from "../../middleware/audit-logger.js"
 
 const router = Router()
 
-const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_SUPPORT"]
+const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 
 router.use(authenticate)
 

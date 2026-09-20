@@ -9,8 +9,8 @@ router.use(authenticate)
 router.get("/", listTrains)
 router.get("/:id", getTrain)
 
-router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "SGR_STATION_OFFICER"), createTrain)
-router.put("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "SGR_STATION_OFFICER"), updateTrain)
+router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"), createTrain)
+router.put("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER"), updateTrain)
 router.delete("/:id", authorizeRoles("SUPER_ADMIN"), deleteTrain)
 router.patch("/:id/toggle", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), toggleTrain)
 

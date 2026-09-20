@@ -13,6 +13,7 @@ export const addBoxItemSchema = z.object({
 
 export const closeBoxSchema = z.object({
   actualWeightKg: z.number().positive(),
+  managerOverride: z.boolean().optional(),
 })
 
 export const boxStatusSchema = z.object({

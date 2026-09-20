@@ -1,12 +1,23 @@
 import prisma from "../../prisma/client.js"
 import { emitToBox, emitToShipment } from "../../realtime/socket.js"
 import { toQrPngBuffer } from "../../utils/qr.js"
+import { logAction } from "../../middleware/audit-logger.js"
 import { createBoxSchema, addBoxItemSchema, closeBoxSchema, boxStatusSchema } from "./validation.js"
 
-// Timestamp-based, like the existing generateBarcode() in warehouse/controller.js —
-// avoids a race-prone sequential counter across concurrent Dubai-office scans.
-function generateBoxNumber(stationCode) {
-  return `BOX-${stationCode}-${Date.now().toString(36).toUpperCase()}`
+// HSR-YYMM-NN per spec Module 2 — unique, never reused (the old Excel reused "HSR 1"
+// nineteen times). Sequential within the month, looked up from the latest existing box.
+async function generateBoxNumber() {
+  const now = new Date()
+  const yy = String(now.getFullYear()).slice(-2)
+  const mm = String(now.getMonth() + 1).padStart(2, "0")
+  const prefix = `HSR-${yy}${mm}-`
+  const latest = await prisma.consolidationBox.findFirst({
+    where: { boxNumber: { startsWith: prefix } },
+    orderBy: { boxNumber: "desc" },
+    select: { boxNumber: true },
+  })
+  const next = latest ? parseInt(latest.boxNumber.slice(prefix.length), 10) + 1 : 1
+  return `${prefix}${String(next).padStart(2, "0")}`
 }
 
 const BOX_INCLUDE = {
@@ -49,7 +60,7 @@ export async function createBox(req, res, next) {
     const station = await prisma.station.findUnique({ where: { id: data.originStationId } })
     if (!station) return res.status(404).json({ success: false, message: "Origin station not found" })
 
-    const boxNumber = generateBoxNumber(station.code)
+    const boxNumber = await generateBoxNumber()
     const box = await prisma.consolidationBox.create({
       data: {
         boxNumber,
@@ -62,6 +73,7 @@ export async function createBox(req, res, next) {
       },
       include: BOX_INCLUDE,
     })
+    await logAction({ userId: req.user.id, action: "CREATE_BOX", entity: "ConsolidationBox", entityId: box.id, changes: { boxNumber, targetWeightKg: box.targetWeightKg }, req })
     res.status(201).json({ success: true, data: box, message: `Box ${boxNumber} created` })
   } catch (err) { next(err) }
 }
@@ -83,6 +95,16 @@ export async function addBoxItem(req, res, next) {
     const existing = await prisma.boxItem.findUnique({ where: { boxId_shipmentId: { boxId: id, shipmentId: shipment.id } } })
     if (existing) return res.status(400).json({ success: false, message: "Shipment is already in this box" })
 
+    // Spec Module 3 — each tracking number lives in exactly ONE box. Reject if the
+    // shipment is already inside another box that hasn't been broken down yet.
+    const elsewhere = await prisma.boxItem.findFirst({
+      where: { shipmentId: shipment.id, box: { status: { notIn: ["BROKEN_DOWN", "LOST", "DAMAGED"] } } },
+      include: { box: { select: { boxNumber: true } } },
+    })
+    if (elsewhere) {
+      return res.status(400).json({ success: false, message: `Shipment is already inside box ${elsewhere.box.boxNumber}` })
+    }
+
     const [item] = await prisma.$transaction([
       prisma.boxItem.create({ data: { boxId: id, shipmentId: shipment.id, addedById: req.user.id, notes: data.notes } }),
       prisma.shipment.update({ where: { id: shipment.id }, data: { status: "CONSOLIDATED", consolidationBatchId: box.boxNumber } }),
@@ -99,6 +121,7 @@ export async function addBoxItem(req, res, next) {
       shipmentId: shipment.id, trackingNumber: shipment.trackingNumber, status: "CONSOLIDATED", previousStatus: shipment.status,
     })
 
+    await logAction({ userId: req.user.id, action: "ADD_BOX_ITEM", entity: "ConsolidationBox", entityId: id, changes: { boxNumber: box.boxNumber, trackingNumber: data.trackingNumber }, req })
     res.status(201).json({ success: true, data: item, message: `Shipment ${data.trackingNumber} added to box ${box.boxNumber}` })
   } catch (err) { next(err) }
 }
@@ -119,6 +142,7 @@ export async function removeBoxItem(req, res, next) {
     ])
 
     emitToBox(id, "box:item_removed", { boxId: id, shipmentId })
+    await logAction({ userId: req.user.id, action: "REMOVE_BOX_ITEM", entity: "ConsolidationBox", entityId: id, changes: { boxNumber: box.boxNumber, shipmentId }, req })
     res.json({ success: true, message: "Item removed from box" })
   } catch (err) { next(err) }
 }
@@ -133,12 +157,34 @@ export async function closeBox(req, res, next) {
     if (box.status !== "PACKING") return res.status(400).json({ success: false, message: `Box is already ${box.status}` })
     if (box.items.length === 0) return res.status(400).json({ success: false, message: "Cannot close an empty box" })
 
+    // Spec Module 2 — warn over the 23KG target; over 30KG needs a manager's explicit
+    // override flag (the old Excel had a 232KG box with no gate at all).
+    const target = Number(box.targetWeightKg)
+    const overweight = data.actualWeightKg > target
+    const severelyOverweight = data.actualWeightKg > 30
+    if (severelyOverweight && !data.managerOverride) {
+      return res.status(400).json({
+        success: false,
+        message: `Box is ${data.actualWeightKg} KG — over the 30 KG hard limit. A manager must approve with managerOverride: true.`,
+      })
+    }
+
     const updated = await prisma.consolidationBox.update({
       where: { id }, data: { status: "PACKED", actualWeightKg: data.actualWeightKg }, include: BOX_INCLUDE,
     })
 
     emitToBox(id, "box:status_changed", { boxId: id, boxNumber: box.boxNumber, status: "PACKED", previousStatus: "PACKING" })
-    res.json({ success: true, data: updated, message: `Box ${box.boxNumber} closed at ${data.actualWeightKg}kg` })
+    await logAction({
+      userId: req.user.id, action: "CLOSE_BOX", entity: "ConsolidationBox", entityId: id,
+      changes: { boxNumber: box.boxNumber, actualWeightKg: data.actualWeightKg, targetWeightKg: target, overweight, managerOverride: data.managerOverride || false }, req,
+    })
+    res.json({
+      success: true,
+      data: updated,
+      message: overweight
+        ? `Box ${box.boxNumber} closed at ${data.actualWeightKg}kg — WARNING: over ${target}kg target`
+        : `Box ${box.boxNumber} closed at ${data.actualWeightKg}kg`,
+    })
   } catch (err) { next(err) }
 }
 
@@ -155,6 +201,7 @@ export async function setBoxStatus(req, res, next) {
     })
 
     emitToBox(id, "box:status_changed", { boxId: id, boxNumber: box.boxNumber, status: data.status, previousStatus: box.status })
+    await logAction({ userId: req.user.id, action: "SET_BOX_STATUS", entity: "ConsolidationBox", entityId: id, changes: { boxNumber: box.boxNumber, from: box.status, to: data.status }, req })
     res.json({ success: true, data: updated, message: `Box marked ${data.status}` })
   } catch (err) { next(err) }
 }

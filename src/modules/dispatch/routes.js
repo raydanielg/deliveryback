@@ -27,10 +27,10 @@ const router = Router()
 router.use(authenticate)
 
 // Get dispatch overview (control tower dashboard)
-router.get("/overview", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getDispatchOverview)
+router.get("/overview", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getDispatchOverview)
 
 // Get dispatch analytics
-router.get("/analytics", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getDispatchAnalytics)
+router.get("/analytics", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getDispatchAnalytics)
 
 // Get dispatch config
 router.get("/config", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), (req, res) => {
@@ -46,22 +46,22 @@ router.put("/config", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), (req,
 })
 
 // Get eligible drivers for a shipment (dispatcher view)
-router.get("/shipments/:id/eligible-drivers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getEligibleDriversForShipment)
+router.get("/shipments/:id/eligible-drivers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getEligibleDriversForShipment)
 
 // Open shipment to driver marketplace
-router.post("/shipments/:id/open-to-drivers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), openToDrivers)
+router.post("/shipments/:id/open-to-drivers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), openToDrivers)
 
 // Auto-assign best driver
-router.post("/shipments/:id/auto-assign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), autoAssign)
+router.post("/shipments/:id/auto-assign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), autoAssign)
 
 // Cancel all pending offers for a shipment
-router.post("/shipments/:id/cancel-offers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), cancelOffers)
+router.post("/shipments/:id/cancel-offers", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), cancelOffers)
 
 // Reassign shipment to a new driver
-router.put("/shipments/:id/reassign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), reassignShipment)
+router.put("/shipments/:id/reassign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), reassignShipment)
 
 // Get assignment history for a shipment
-router.get("/shipments/:id/assignments", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getAssignmentHistory)
+router.get("/shipments/:id/assignments", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getAssignmentHistory)
 
 // ============================================================
 // DRIVER APP ENDPOINTS (driver-auth required)

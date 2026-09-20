@@ -31,7 +31,7 @@ const router = Router()
 
 router.use(authenticate)
 
-const WHATSAPP_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "CUSTOMER_SUPPORT"]
+const WHATSAPP_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 
 // Dashboard
 router.get("/dashboard", getDashboard)
@@ -47,7 +47,7 @@ router.post("/connections/:id/disconnect", authorizeRoles("SUPER_ADMIN", "OPERAT
 router.patch("/connections/:id/toggle", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), toggleConnection)
 
 // Messaging
-router.post("/send", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), sendMessage)
+router.post("/send", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), sendMessage)
 router.post("/send-test", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), sendTestMessageController)
 // Message log — every customer's phone number + message body/template, system-wide.
 // Previously had no role check at all.
@@ -65,11 +65,11 @@ router.patch("/templates/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER
 
 // Campaigns
 router.get("/campaigns", listCampaigns)
-router.post("/campaigns", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "MARKETING"), createCampaignController)
-router.post("/campaigns/:id/start", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "MARKETING"), startCampaignController)
-router.post("/campaigns/:id/pause", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "MARKETING"), pauseCampaignController)
-router.post("/campaigns/:id/resume", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "MARKETING"), resumeCampaignController)
-router.post("/campaigns/:id/cancel", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "MARKETING"), cancelCampaignController)
+router.post("/campaigns", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createCampaignController)
+router.post("/campaigns/:id/start", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), startCampaignController)
+router.post("/campaigns/:id/pause", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), pauseCampaignController)
+router.post("/campaigns/:id/resume", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), resumeCampaignController)
+router.post("/campaigns/:id/cancel", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), cancelCampaignController)
 router.get("/campaigns/:id/analytics", getCampaignAnalyticsController)
 
 export default router

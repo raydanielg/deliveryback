@@ -4,6 +4,7 @@ import { startWebhookDispatcher } from "./modules/integrations/webhook-dispatche
 import { initWhatsAppEngine } from "./modules/whatsapp/controller.js"
 import { initWhatsAppEventIntegration } from "./modules/whatsapp/event-integration.js"
 import { initRealtime } from "./realtime/socket.js"
+import { startOldStockJob } from "./jobs/old-stock.js"
 
 dotenv.config()
 
@@ -18,6 +19,7 @@ const server = app.listen(PORT, process.env.BIND_ADDRESS || "0.0.0.0", () => {
   initWhatsAppEngine().catch((err) => console.error("[WhatsApp] Init error:", err.message))
   initWhatsAppEventIntegration()
   initRealtime(server)
+  startOldStockJob()
   console.log("[Delivery Option API] Socket.IO realtime layer attached")
 })
 

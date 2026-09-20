@@ -99,7 +99,7 @@ router.get("/shipment/:shipmentId/discrepancy", getPackageDiscrepancy)
 // could scan any package by barcode and force its lifecycle status forward.
 router.post(
   "/scan",
-  authorizeRoles("DRIVER", "WAREHOUSE_MANAGER", "DISPATCHER", "SGR_STATION_OFFICER", "OPERATIONS_MANAGER", "SUPER_ADMIN"),
+  authorizeRoles("DRIVER", "WAREHOUSE_MANAGER", "OPERATIONS_MANAGER", "SUPER_ADMIN"),
   scanPackage
 )
 

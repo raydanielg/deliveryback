@@ -1,4 +1,5 @@
 import prisma from "../../prisma/client.js"
+import { rateCardQuote } from "../logistics/service.js"
 
 const VOLUMETRIC_DIVISOR = 5000
 
@@ -115,6 +116,47 @@ export async function calculateQuote(params) {
 
   const volumetricWeight = calculateVolumetricWeight(lengthCm, widthCm, heightCm)
   const chargeableWeight = getChargeableWeight(actualWeightKg, volumetricWeight)
+
+  // Rate cards (vehicle classes) are the source of truth for price and journey time. Destinations
+  // that are blocked or unlisted are refused here, for every caller.
+  const card = await rateCardQuote({
+    transportMode, serviceLevel,
+    origin: { city: originCity, country: originCountry, airportIata: params.originAirport, latitude: params.originLatitude, longitude: params.originLongitude },
+    destination: { city: destinationCity, country: destCountry, airportIata: params.destinationAirport, latitude: params.destinationLatitude, longitude: params.destinationLongitude },
+    chargeableKg: chargeableWeight, actualWeightKg,
+    volumeM3: lengthCm && widthCm && heightCm ? (lengthCm * widthCm * heightCm) / 1e6 : undefined,
+    vehicleCategory: params.vehicleCategory,
+    ignoreBlocks: params.ignoreBlocks,
+  })
+  if (card?.customQuote) {
+    return { requiresCustomQuote: true, message: card.message, actualWeightKg, volumetricWeightKg: volumetricWeight, chargeableWeightKg: chargeableWeight }
+  }
+  if (card) {
+    const o = card.option
+    let insurancePremium = 0
+    if (insuranceEnabled && declaredValue > 0) insurancePremium = Number((declaredValue * 0.015).toFixed(2))
+    return {
+      requiresCustomQuote: false,
+      currency: "TZS",
+      distanceKm: o.distanceKm,
+      actualWeightKg,
+      volumetricWeightKg: volumetricWeight,
+      chargeableWeightKg: chargeableWeight,
+      subtotal: o.price,
+      fees: {},
+      tax: 0,
+      insurancePremium,
+      total: Number((o.price + insurancePremium).toFixed(2)),
+      etaMin: o.eta.minDays,
+      etaMax: o.eta.maxDays,
+      etaHours: { min: o.eta.minHours, max: o.eta.maxHours },
+      etaLabel: { en: o.eta.labelEn, sw: o.eta.labelSw },
+      multiDay: o.eta.multiDay,
+      vehicleClass: o.vehicleClass,
+      priceBreakdown: o.priceBreakdown,
+      appliedRule: { id: o.vehicleClass.id, name: o.vehicleClass.name, code: o.vehicleClass.code, type: "RATE_CARD" },
+    }
+  }
 
   const rules = await findApplicableRules({
     category,

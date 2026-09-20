@@ -61,7 +61,7 @@ function scopeDriverFields(driver, canViewSensitive) {
   return rest
 }
 
-const SENSITIVE_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]
+const SENSITIVE_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 
 export async function listDrivers(req, res, next) {
   try {

@@ -1,6 +1,7 @@
 import prisma from "../../prisma/client.js"
 import { emitToRole, emitToShipment } from "../../realtime/socket.js"
 import { computeCharges } from "../delivery-config/controller.js"
+import { logAction } from "../../middleware/audit-logger.js"
 import { requestApprovalSchema, rejectApprovalSchema } from "./validation.js"
 
 const NOTIFY_ROLES = ["FINANCE", "OPERATIONS_MANAGER", "SUPER_ADMIN"]
@@ -64,11 +65,21 @@ export async function approveApproval(req, res, next) {
     if (!approval) return res.status(404).json({ success: false, message: "Payment approval not found" })
     if (approval.approvalStatus !== "PENDING") return res.status(400).json({ success: false, message: `Already ${approval.approvalStatus}` })
 
+    // R12 — the person who prepared/requested the approval cannot approve it themselves.
+    if (approval.requestedById === req.user.id) {
+      return res.status(403).json({ success: false, message: "You cannot approve a request you prepared — another approver must decide" })
+    }
+
     const updated = await prisma.paymentApproval.update({
       where: { id }, data: { approvalStatus: "APPROVED", approvedById: req.user.id, approvedAt: new Date() },
     })
 
     emitToShipment(approval.shipmentId, "payment:approval_resolved", { approvalId: id, shipmentId: approval.shipmentId, approvalStatus: "APPROVED", approvedBy: req.user.name })
+
+    await logAction({
+      userId: req.user.id, action: "APPROVE_PAYMENT", entity: "PaymentApproval", entityId: id,
+      changes: { shipmentId: approval.shipmentId, totalCharges: approval.totalCharges, requestedById: approval.requestedById }, req,
+    })
 
     res.json({ success: true, data: updated, message: "Payment approved — shipment can now be released" })
   } catch (err) { next(err) }
@@ -83,11 +94,21 @@ export async function rejectApproval(req, res, next) {
     if (!approval) return res.status(404).json({ success: false, message: "Payment approval not found" })
     if (approval.approvalStatus !== "PENDING") return res.status(400).json({ success: false, message: `Already ${approval.approvalStatus}` })
 
+    // R12 — the person who prepared/requested the approval cannot reject it themselves either.
+    if (approval.requestedById === req.user.id) {
+      return res.status(403).json({ success: false, message: "You cannot reject a request you prepared — another approver must decide" })
+    }
+
     const updated = await prisma.paymentApproval.update({
       where: { id }, data: { approvalStatus: "REJECTED", approvedById: req.user.id, approvedAt: new Date(), rejectionReason: data.reason },
     })
 
     emitToShipment(approval.shipmentId, "payment:approval_resolved", { approvalId: id, shipmentId: approval.shipmentId, approvalStatus: "REJECTED", approvedBy: req.user.name })
+
+    await logAction({
+      userId: req.user.id, action: "REJECT_PAYMENT", entity: "PaymentApproval", entityId: id,
+      changes: { shipmentId: approval.shipmentId, totalCharges: approval.totalCharges, reason: data.reason }, req,
+    })
 
     res.json({ success: true, data: updated, message: "Payment approval rejected" })
   } catch (err) { next(err) }

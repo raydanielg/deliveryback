@@ -408,20 +408,18 @@ export async function triggerEventNotification(eventType, shipmentId, variables 
       id: true,
       trackingNumber: true,
       createdById: true,
-      fromPhone: true,
-      toPhone: true,
-      fromFullName: true,
-      toFullName: true,
+      fromAddress: { select: { phone: true, fullName: true } },
+      toAddress: { select: { phone: true, fullName: true } },
     },
   })
 
   if (!shipment) return null
 
-  // Determine recipient phone
-  const recipient = shipment.toPhone || shipment.fromPhone
+  // Determine recipient phone (status updates go to whoever the cargo is going to)
+  const recipient = shipment.toAddress?.phone || shipment.fromAddress?.phone
   if (!recipient) return null
 
-  const recipientName = shipment.toFullName || shipment.fromFullName || "Customer"
+  const recipientName = shipment.toAddress?.fullName || shipment.fromAddress?.fullName || "Customer"
 
   return queueMessage({
     connectionId: conn.id,

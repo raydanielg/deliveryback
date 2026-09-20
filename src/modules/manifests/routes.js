@@ -19,7 +19,7 @@ router.use(authenticate)
 // Staff/dispatch-only — no driver- or customer-facing client calls this module; matches
 // the write-path audience already enforced below. Previously had no role check at all,
 // exposing driver name/phone and full shipment addresses to any authenticated user.
-const MANIFEST_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"]
+const MANIFEST_STAFF = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 
 /**
  * @swagger
@@ -106,7 +106,7 @@ router.get("/qr/:qrCode", authorizeRoles(...MANIFEST_STAFF), getManifestByQR)
  *       403:
  *         description: Insufficient permissions
  */
-router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), createManifest)
+router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createManifest)
 
 /**
  * @swagger
@@ -139,7 +139,7 @@ router.post("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER
  *       400:
  *         description: Validation error
  */
-router.post("/sgr", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), createSGRManifest)
+router.post("/sgr", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), createSGRManifest)
 
 /**
  * @swagger
@@ -169,7 +169,7 @@ router.post("/sgr", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATC
  *       404:
  *         description: Parcel not in manifest
  */
-router.post("/:id/scan", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), scanParcelLoad)
+router.post("/:id/scan", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), scanParcelLoad)
 
 /**
  * @swagger
@@ -189,7 +189,7 @@ router.post("/:id/scan", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DI
  *       200:
  *         description: Loading completed
  */
-router.post("/:id/complete-loading", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), completeLoading)
+router.post("/:id/complete-loading", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), completeLoading)
 
 /**
  * @swagger
@@ -221,7 +221,7 @@ router.post("/:id/complete-loading", authorizeRoles("SUPER_ADMIN", "OPERATIONS_M
  *       400:
  *         description: Step already signed
  */
-router.post("/:id/handover", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), signHandover)
+router.post("/:id/handover", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), signHandover)
 
 /**
  * @swagger
@@ -251,6 +251,6 @@ router.post("/:id/handover", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER",
  *       404:
  *         description: Manifest not found
  */
-router.patch("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), updateManifestStatus)
+router.patch("/:id/status", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), updateManifestStatus)
 
 export default router

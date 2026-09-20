@@ -26,6 +26,8 @@ export async function authenticate(req, res, next) {
         avatar: true,
         isVerified: true,
         isActive: true,
+        branchId: true,
+        agentKind: true,
       },
     })
 
@@ -62,6 +64,11 @@ export async function authenticate(req, res, next) {
 
 export function authorizeRoles(...roles) {
   const allowed = roles.flat()
+  // Operations (IT) carries Super Admin privileges: any route that admits SUPER_ADMIN
+  // admits OPERATIONS_MANAGER too, so route lists don't have to repeat both.
+  if (allowed.includes("SUPER_ADMIN") && !allowed.includes("OPERATIONS_MANAGER")) {
+    allowed.push("OPERATIONS_MANAGER")
+  }
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({

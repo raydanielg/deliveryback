@@ -391,7 +391,7 @@ router.get("/:id", getShipment)
 // and requires the shipment be assigned to them.
 router.put(
   "/:id/status",
-  authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "WAREHOUSE_MANAGER", "SGR_STATION_OFFICER", "DRIVER"),
+  authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "WAREHOUSE_MANAGER", "DRIVER"),
   updateShipmentStatus
 )
 
@@ -423,7 +423,7 @@ router.put(
  *       403:
  *         description: Insufficient permissions
  */
-router.put("/:id/assign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), assignShipment)
+router.put("/:id/assign", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), assignShipment)
 
 /**
  * @swagger

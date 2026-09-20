@@ -14,7 +14,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 5 },
 })
 
-const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "CUSTOMER_SUPPORT"]
+const STAFF_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER"]
 
 router.use(authenticate)
 

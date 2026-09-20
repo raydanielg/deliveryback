@@ -1,4 +1,5 @@
 import prisma from "../../prisma/client.js"
+import { shipmentScope, canAccessShipment } from "../../utils/branch-scope.js"
 import fs from "fs/promises"
 import path from "path"
 import { calculateQuote } from "../pricing/service.js"
@@ -199,6 +200,8 @@ export async function listShipments(req, res, next) {
     if (req.user.role === "CUSTOMER") {
       where.createdById = req.user.id
     }
+    const branchScope = await shipmentScope(req.user)
+    if (branchScope) where.AND = [branchScope]
 
     const [shipments, total] = await Promise.all([
       prisma.shipment.findMany({
@@ -260,6 +263,10 @@ export async function getShipment(req, res, next) {
       if (!driver || shipment.driverId !== driver.id) {
         return res.status(404).json({ success: false, message: "Shipment not found" })
       }
+    }
+    // Branch managers see their branch's shipments, agents only the ones they hold a task on.
+    if (!(await canAccessShipment(req.user, shipment.id))) {
+      return res.status(404).json({ success: false, message: "Shipment not found" })
     }
 
     res.json({ success: true, data: shipment })
@@ -548,7 +555,7 @@ export async function getShipmentStats(req, res, next) {
   try {
     // Previously unscoped — any authenticated CUSTOMER could call this and see
     // platform-wide shipment counts across every customer, not just their own.
-    const base = req.user.role === "CUSTOMER" ? { createdById: req.user.id } : {}
+    const base = req.user.role === "CUSTOMER" ? { createdById: req.user.id } : ((await shipmentScope(req.user)) || {})
 
     const [total, active, delivered, cancelled, inTransit, scheduled] = await Promise.all([
       prisma.shipment.count({ where: base }),

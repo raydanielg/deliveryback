@@ -27,11 +27,11 @@ const router = Router()
 // ============================================================
 router.use(authenticate)
 
-router.get("/overview", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getTripOverview)
-router.get("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), listTrips)
-router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), getTrip)
-router.post("/:id/complete", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), completeTrip)
-router.post("/:id/resolve-exception", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), resolveException)
+router.get("/overview", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getTripOverview)
+router.get("/", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), listTrips)
+router.get("/:id", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), getTrip)
+router.post("/:id/complete", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), completeTrip)
+router.post("/:id/resolve-exception", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), resolveException)
 
 // ============================================================
 // DRIVER APP ENDPOINTS (driver-auth required)

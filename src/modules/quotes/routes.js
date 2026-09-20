@@ -195,7 +195,7 @@ router.get("/requests", listQuoteRequests)
  *       403:
  *         description: Insufficient permissions
  */
-router.put("/requests/:id/respond", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER"), respondToQuoteRequest)
+router.put("/requests/:id/respond", authorizeRoles("SUPER_ADMIN", "OPERATIONS_MANAGER"), respondToQuoteRequest)
 
 /**
  * @swagger

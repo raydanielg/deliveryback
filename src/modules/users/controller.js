@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs"
 import prisma from "../../prisma/client.js"
+import { ASSIGNABLE_ROLES } from "../../utils/roles.js"
 import { createUserSchema, updateUserSchema, changePasswordSchema, staffCredentialsSchema } from "./validation.js"
 
 export async function listUsers(req, res, next) {
@@ -24,6 +25,7 @@ export async function listUsers(req, res, next) {
           id: true, name: true, email: true, phone: true, role: true,
           avatar: true, isVerified: true, isActive: true,
           lastLoginAt: true, createdAt: true,
+          branchId: true, agentKind: true, branch: { select: { id: true, name: true, code: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -68,6 +70,12 @@ export async function createUser(req, res, next) {
     const existing = await prisma.user.findUnique({ where: { email: data.email } })
     if (existing) return res.status(409).json({ success: false, message: "Email already in use" })
 
+    const branchBound = data.role === "BRANCH_MANAGER" || data.role === "AGENT"
+    if (branchBound) {
+      const branch = await prisma.branch.findUnique({ where: { id: data.branchId }, select: { isActive: true } })
+      if (!branch || !branch.isActive) return res.status(400).json({ success: false, message: "That branch does not exist or is switched off" })
+    }
+
     const hashedPassword = await bcrypt.hash(data.password, 12)
     const user = await prisma.user.create({
       data: {
@@ -77,10 +85,12 @@ export async function createUser(req, res, next) {
         password: hashedPassword,
         role: data.role,
         isActive: data.isActive,
+        branchId: branchBound ? data.branchId : null,
+        agentKind: data.role === "AGENT" ? data.agentKind : null,
       },
       select: {
         id: true, name: true, email: true, phone: true, role: true,
-        avatar: true, isVerified: true, isActive: true, createdAt: true,
+        avatar: true, isVerified: true, isActive: true, createdAt: true, branchId: true, agentKind: true,
       },
     })
     res.status(201).json({ success: true, data: user, message: "User created successfully" })
@@ -92,6 +102,10 @@ export async function updateUser(req, res, next) {
     const { id } = req.params
     const data = updateUserSchema.parse(req.body)
 
+    if (data.role && id === req.user.id && data.role !== req.user.role) {
+      return res.status(400).json({ success: false, message: "You cannot change your own role" })
+    }
+
     if (data.email) {
       const existing = await prisma.user.findUnique({ where: { email: data.email } })
       if (existing && existing.id !== id) {
@@ -99,12 +113,31 @@ export async function updateUser(req, res, next) {
       }
     }
 
+    // Keep branch fields consistent with the role: branch roles need a branch (and agents a kind),
+    // every other role carries neither.
+    const current = await prisma.user.findUnique({ where: { id }, select: { role: true, branchId: true, agentKind: true } })
+    if (!current) return res.status(404).json({ success: false, message: "User not found" })
+    const nextRole = data.role ?? current.role
+    if (nextRole === "BRANCH_MANAGER" || nextRole === "AGENT") {
+      const branchId = data.branchId === undefined ? current.branchId : data.branchId
+      if (!branchId) return res.status(400).json({ success: false, message: "Choose the branch this person works for" })
+      const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { isActive: true } })
+      if (!branch || !branch.isActive) return res.status(400).json({ success: false, message: "That branch does not exist or is switched off" })
+      const kind = data.agentKind === undefined ? current.agentKind : data.agentKind
+      if (nextRole === "AGENT" && !kind) return res.status(400).json({ success: false, message: "Choose the agent's kind of work (clearing, forwarding or receiving)" })
+      data.branchId = branchId
+      data.agentKind = nextRole === "AGENT" ? kind : null
+    } else if (data.role) {
+      data.branchId = null
+      data.agentKind = null
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data,
       select: {
         id: true, name: true, email: true, phone: true, role: true,
-        avatar: true, isVerified: true, isActive: true, updatedAt: true,
+        avatar: true, isVerified: true, isActive: true, updatedAt: true, branchId: true, agentKind: true,
       },
     })
     res.json({ success: true, data: user, message: "User updated successfully" })
@@ -143,13 +176,26 @@ export async function changeUserRole(req, res, next) {
   try {
     const { id } = req.params
     const { role } = req.body
-    const validRoles = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "DISPATCHER", "FINANCE", "CUSTOMER_SUPPORT", "WAREHOUSE_MANAGER", "CUSTOMS_OFFICER", "REPORT_VIEWER", "CUSTOMER", "DRIVER"]
-    if (!validRoles.includes(role)) {
+    if (!ASSIGNABLE_ROLES.includes(role)) {
       return res.status(400).json({ success: false, message: "Invalid role" })
+    }
+    if (id === req.user.id) {
+      return res.status(400).json({ success: false, message: "You cannot change your own role" })
+    }
+    // Branch roles need a branch (and agents a kind of work) — set those from Edit user. Any other
+    // role carries neither, so moving someone off a branch role clears them.
+    const current = await prisma.user.findUnique({ where: { id }, select: { branchId: true, agentKind: true } })
+    if (!current) return res.status(404).json({ success: false, message: "User not found" })
+    const branchBound = role === "BRANCH_MANAGER" || role === "AGENT"
+    if (branchBound && !current.branchId) {
+      return res.status(400).json({ success: false, message: "Assign a branch first: open Edit user, choose the branch, then save the role" })
+    }
+    if (role === "AGENT" && !current.agentKind) {
+      return res.status(400).json({ success: false, message: "Choose the agent's kind of work first (Edit user)" })
     }
     const user = await prisma.user.update({
       where: { id },
-      data: { role },
+      data: { role, ...(branchBound ? (role === "AGENT" ? {} : { agentKind: null }) : { branchId: null, agentKind: null }) },
       select: { id: true, name: true, email: true, role: true },
     })
     res.json({ success: true, data: user, message: "Role updated successfully" })

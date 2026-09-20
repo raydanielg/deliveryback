@@ -162,7 +162,9 @@ export async function sendNotification(userId, status, shipmentData, customChann
   }
 }
 
-async function sendNotificationSMS(phone, message, userId) {
+// Both channel senders log success/failure themselves and resolve true/false (they never throw),
+// so callers can report what actually happened.
+export async function sendNotificationSMS(phone, message, userId) {
   try {
     const smsMessage = `Xerin Express: ${message}`
     const result = await sendSms(phone, smsMessage)
@@ -177,6 +179,7 @@ async function sendNotificationSMS(phone, message, userId) {
         sentAt: new Date(),
       },
     })
+    return true
   } catch (err) {
     console.error("[NOTIFICATION] SMS send error:", err.message)
     await prisma.notificationLog.create({
@@ -188,10 +191,11 @@ async function sendNotificationSMS(phone, message, userId) {
         errorMessage: err.message,
       },
     })
+    return false
   }
 }
 
-async function sendNotificationEmail(email, name, subject, body, userId) {
+export async function sendNotificationEmail(email, name, subject, body, userId) {
   try {
     let success = false
     let providerId = null
@@ -232,6 +236,7 @@ async function sendNotificationEmail(email, name, subject, body, userId) {
         sentAt: success ? new Date() : null,
       },
     })
+    return success
   } catch (err) {
     console.error("Email send error:", err.message)
     await prisma.notificationLog.create({
@@ -243,6 +248,7 @@ async function sendNotificationEmail(email, name, subject, body, userId) {
         errorMessage: err.message,
       },
     })
+    return false
   }
 }
 

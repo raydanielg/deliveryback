@@ -16,7 +16,7 @@ import { publicEndpointLimiter, partnerApiLimiter } from "../../middleware/rate-
 const router = Router()
 
 const ADMIN_ROLES = ["SUPER_ADMIN"]
-const VIEW_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "REPORT_VIEWER"]
+const VIEW_ROLES = ["SUPER_ADMIN"] // Operations (IT) is admitted alongside Super Admin; Finance has no need for partner/webhook internals
 
 // ============================================================
 // Inbound: a partner pushing events INTO Xerin. Public route — authenticated by HMAC

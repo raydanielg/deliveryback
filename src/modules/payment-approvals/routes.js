@@ -5,7 +5,7 @@ import { authenticate, authorizeRoles } from "../../middleware/auth.js"
 const router = Router()
 // Warehouse staff can see the queue (they need to know why a release is blocked) and
 // request an approval; only Finance/Operations/Super Admin can actually approve/reject.
-const VIEW_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "FINANCE", "WAREHOUSE_MANAGER", "DISPATCHER"]
+const VIEW_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "FINANCE", "WAREHOUSE_MANAGER"]
 const APPROVE_ROLES = ["SUPER_ADMIN", "OPERATIONS_MANAGER", "FINANCE"]
 
 router.use(authenticate)
