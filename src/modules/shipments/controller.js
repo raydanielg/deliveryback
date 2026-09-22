@@ -247,6 +247,7 @@ export async function getShipment(req, res, next) {
         customsDeclaration: true,
         documents: true,
         ratings: true,
+        createdBy: { select: { name: true, phone: true, email: true } },
       },
     })
 
